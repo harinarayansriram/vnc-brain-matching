@@ -133,13 +133,13 @@ class ConnectomeGraphGenerator:
         female_edges = self._add_noise(base_edges)
         
         # Write male connectome
-        self._write_graph('test_male_connectome_graph.csv', male_edges)
+        self._write_graph('../test_male_connectome_graph.csv', male_edges)
         
         # Write female connectome
-        self._write_graph('test_female_connectome_graph.csv', female_edges)
+        self._write_graph('../test_female_connectome_graph.csv', female_edges)
         
         # Write identity matching as warm start
-        self._write_matching('test_warm_start.csv')
+        self._write_matching('../test_warm_start.csv')
         
         # Calculate and return optimal score estimate
         return self._estimate_optimal_score(male_edges, female_edges)
