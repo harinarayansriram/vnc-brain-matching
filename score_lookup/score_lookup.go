@@ -1,12 +1,57 @@
 package main
 
 import (
+	"bufio"
 	"encoding/csv"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
+	"container/heap"
 )
+
+type Swap struct{
+	male_node_id int
+	female_node_id int
+	delta int
+}
+
+type BoundedHeap struct {
+	elements []Swap
+	capacity int
+}
+//Max heap
+
+func (h *BoundedHeap) Len() int {
+	return len(h.elements)
+}
+func (h *BoundedHeap) Less(i, j int) bool {
+	return h.elements[i].delta > h.elements[j].delta
+}
+func (h *BoundedHeap) Swap(i, j int) {
+	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
+}
+func (h *BoundedHeap) Push(x interface{}) {
+	if len(h.elements) < h.capacity {
+		heap.Push(h, x)
+	}else if(x.(int) > h.elements[0].delta){
+		heap.Pop(h)
+		heap.Push(h, x)
+	}
+}
+
+func (h *BoundedHeap) Pop() interface{} {
+	x := heap.Pop(h)
+	return x
+}
+
+func newBoundedHeap(capacity int) *BoundedHeap {
+	return &BoundedHeap{
+		elements: make([]int, 0, capacity),
+		capacity: capacity,
+	}
+}
 
 const saveInterval int = 25
 const updateInterval int = 20
@@ -111,41 +156,7 @@ func loadGraphFromCSV(filename string) (*Graph, error) {
 	return graph, nil
 }
 
-// Loads benchmark mapping from CSV
-func loadBenchmarkMapping(filename string) (map[int]int, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
 
-	reader := csv.NewReader(file)
-	// Skip header
-	_, err = reader.Read()
-	if err != nil {
-		return nil, err
-	}
-
-	mapping := make(map[int]int)
-
-	for {
-		record, err := reader.Read()
-		if err != nil {
-			break
-		}
-		from, err := strconv.Atoi(record[0][1:])
-		if err != nil {
-			panic(err)
-		}
-		to, err := strconv.Atoi(record[1][1:])
-		if err != nil {
-			panic(err)
-		}
-		mapping[from] = to
-	}
-
-	return mapping, nil
-}
 
 // Calculate change in alignment score for swapping two nodes
 func calculateSwapDelta(gm, gf *Graph, mapping map[int]int, nodeM1, nodeM2 int) int {
@@ -239,20 +250,34 @@ func writeMapping(filename string, mapping map[int]int) {
 	wr.Flush()
 }
 
-func createScoreLookup(gm, gf *Graph, mapping map[int]int) []int16 {
-	lookup := make([]int16, nodeCount*nodeCount)
+func loadScoreAdjacency(filename string) []int16 {
+	adjacency := make([]int16, nodeCount*nodeCount)
+	file, err := os.Open(filename)
+	if err != nil {
+		panic(err)
+	}
 
-	for m1 := 0; m1 < len(gm.nodes); m1++ {
-		lookup[m1 * len(gm.nodes) + m1] = 0
+	defer file.Close()
 
-		for m2 := 0; m2 < m1; m2++ {
-			delta := int16(calculateSwapDelta(gm, gf, mapping, m1, m2))
-			lookup[m1 * len(gm.nodes) + m2] = delta
-			lookup[m2 * len(gm.nodes) + m1] = delta
+	scanner := bufio.NewScanner(file)
+	scanner.Split(bufio.ScanLines)
+	for i := 0; i < nodeCount; i++ {
+		scanner.Scan()
+		line := scanner.Text()
+		if len(line) == 0 {
+			break
+		}
+		tokens := strings.Split(line, ",")
+		for j := 0; j < nodeCount; j++ {
+			delta, err := strconv.Atoi(tokens[j])
+			if err != nil {
+				panic(err)
+			}
+			adjacency[i*nodeCount+j] = int16(delta)
 		}
 	}
 
-	return lookup
+	return adjacency
 }
 
 // Optimizes mapping using local search with node similarity heuristics

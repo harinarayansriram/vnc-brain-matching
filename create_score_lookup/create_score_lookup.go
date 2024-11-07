@@ -206,15 +206,15 @@ func createScoreLookup(gm, gf *Graph, mapping map[int]int) []int16 {
 	lookup := make([]int16, nodeCount*nodeCount)
 
 	for m1 := 0; m1 < nodeCount; m1++ {
-		lookup[m1 * nodeCount + m1] = 0
+		lookup[m1*nodeCount+m1] = 0
 
 		for m2 := 0; m2 < m1; m2++ {
-			if m1 * nodeCount + m2 % 100000 == 0 {
-				fmt.Println("Done with", m1 * nodeCount + m2, "pairs out of", nodeCount*nodeCount)
+			if (m1*nodeCount+m2)%10000 == 0 {
+				fmt.Println("Done with", m1*nodeCount+m2, "pairs out of", nodeCount*(nodeCount-1)/2)
 			}
 			delta := int16(calculateSwapDelta(gm, gf, mapping, m1, m2))
-			lookup[m1 * nodeCount + m2] = delta
-			lookup[m2 * nodeCount + m1] = delta
+			lookup[m1*nodeCount+m2] = delta
+			lookup[m2*nodeCount+m1] = delta
 		}
 	}
 	fmt.Println("Finished creating score lookup")
@@ -234,7 +234,7 @@ func saveScoreLookup(lookup []int16, filename string) error {
 	defer wr.Flush()
 
 	for m1 := 0; m1 < nodeCount; m1++ {
-		if m1 % 1000 == 0{
+		if m1%1000 == 0 {
 			fmt.Println("Done with", m1, "rows out of", nodeCount)
 		}
 		var row []string
@@ -247,7 +247,7 @@ func saveScoreLookup(lookup []int16, filename string) error {
 	return wr.Error()
 }
 
-func main(){
+func main() {
 	if len(os.Args) < 5 {
 		fmt.Println("Usage: create_score_lookup <male graph> <female graph> <benchmark mapping> <output file>")
 		os.Exit(1)
