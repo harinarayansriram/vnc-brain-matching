@@ -132,13 +132,6 @@ Graph* new_graph() {
     g->reverse_edges = NULL;
     g->adj_matrix = NULL;
     g->adj_matrix = (short*)calloc((NUM_NODES+1) * (NUM_NODES+1), sizeof(short*));
-
-    //g->nodes = malloc(sizeof(int) * 10000);
-    //if (!g->nodes) {
-    //    LOG_ERROR("Failed to allocate nodes array");
-    //    exit(1);
-    //}
-    //g->node_count = 0;
     g->node_capacity = 10000;
     return g;
 }
@@ -159,23 +152,6 @@ void add_to_edge_map(EdgeMap* em, int to, int weight) {
     em->weights[em->count] = weight;
     em->count++;
 }
-
-//void add_node(Graph* g, int node) {
-//    for (int i = 0; i < g->node_count; i++) {
-//        if (g->nodes[i] == node) return;
-//    }
-//    
-//    if (g->node_count >= g->node_capacity) {
-//        g->node_capacity *= 2;
-//        int* new_nodes = realloc(g->nodes, sizeof(int) * g->node_capacity);
-//        if (!new_nodes) {
-//            LOG_ERROR("Failed to reallocate nodes array");
-//            exit(1);
-//        }
-//        g->nodes = new_nodes;
-//    }
-//    g->nodes[g->node_count++] = node;
-//}
 
 void add_edge(Graph* g, int from, int to, int weight) {
   //    LOG_DEBUG("Adding edge: %d -> %d (weight: %d)", from, to, weight);
@@ -200,90 +176,8 @@ void add_edge(Graph* g, int from, int to, int weight) {
     add_to_edge_map(&g->reverse_edges[to], from, weight);
 }
 
-int get_weight(Graph* g, int from, int to) {
+inline int get_weight(Graph* g, int from, int to) {
     return g->adj_matrix[from*NUM_NODES + to];
-    //for (int i = 0; i < g->edges[from].count; i++) {
-    //    if (g->edges[from].to_nodes[i] == to) {
-    //        return g->edges[from].weights[i];
-    //    }
-    //}
-    //return 0;
-}
-
-int* read_ordering(const char* filename, int max_node) {
-    FILE* file = fopen(filename, "r");
-    if (!file) {
-        LOG_ERROR("Error opening file: %s", filename);
-        exit(1);
-    }
-
-    int* ordering = calloc(max_node + 1, sizeof(int));
-    char line[MAX_LINE_LENGTH];
-    
-    LOG_INFO("Reading ordering from %s", filename);
-    
-    // Skip header
-    fgets(line, MAX_LINE_LENGTH, file);
-    
-    while (fgets(line, MAX_LINE_LENGTH, file)) {
-        int node_id, order;
-        sscanf(line, "%d,%d", &node_id, &order);
-        ordering[node_id] = order;
-    }
-    
-    fclose(file);
-    return ordering;
-}
-
-NodeMetrics* calculate_node_metrics(Graph* g, const char* ordering_path) {
-    int max_node = NUM_NODES;
-    //for (int i = 0; i < g->node_count; i++) {
-    //    if (g->nodes[i] > max_node) max_node = g->nodes[i];
-    //}
-
-    LOG_INFO("Calculating node metrics");
-    
-    int* ordering = read_ordering(ordering_path, max_node);
-    NodeMetrics* metrics = calloc(max_node + 1, sizeof(NodeMetrics));
-    
-    for (int node=1; node<=NUM_NODES; node++) {
-        //int node = g->nodes[i];
-        NodeMetrics* m = &metrics[node];
-        
-        m->out_degree = g->edges[node].count;
-        for (int j = 0; j < g->edges[node].count; j++) {
-            m->total_weight += g->edges[node].weights[j];
-        }
-        
-        m->in_degree = g->reverse_edges[node].count;
-        for (int j = 0; j < g->reverse_edges[node].count; j++) {
-            m->total_weight += g->reverse_edges[node].weights[j];
-        }
-        
-        if (m->out_degree > 0) {
-            m->avg_out_weight = (double)m->total_weight / m->out_degree;
-        }
-        if (m->in_degree > 0) {
-            m->avg_in_weight = (double)m->total_weight / m->in_degree;
-        }
-        
-        m->ordering_rank = ordering[node];
-    }
-    
-    free(ordering);
-    return metrics;
-}
-
-double calculate_node_similarity(NodeMetrics m1, NodeMetrics m2) {
-    double score = 5 * fabs(m1.in_degree - m2.in_degree) +
-                   5 * fabs(m1.out_degree - m2.out_degree) +
-                   fabs(m1.avg_in_weight - m2.avg_in_weight) +
-                   fabs(m1.avg_out_weight - m2.avg_out_weight);
-    
-    double ordering_sim = fabs(m1.ordering_rank - m2.ordering_rank);
-    score = 0.7 * score + 0.3 * ordering_sim;
-    
-    return -score;
 }
 
 int calculate_alignment_score(Graph* gm, Graph* gf, int* mapping) {
@@ -301,18 +195,6 @@ int calculate_alignment_score(Graph* gm, Graph* gf, int* mapping) {
     }
     
     return score;
-}
-
-void validate_mapping_changes(int* old_mapping, int* new_mapping, int max_node,
-                            int node_m1, int node_m2) {
-    for (int i = 1; i <= max_node; i++) {
-        if (i != node_m1 && i != node_m2) {
-            if (old_mapping[i] != new_mapping[i]) {
-                LOG_ERROR("Unexpected mapping change for node %d: %d -> %d",
-                         i, old_mapping[i], new_mapping[i]);
-            }
-        }
-    }
 }
 
 int calculate_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int node_m2) {
@@ -404,18 +286,42 @@ int calculate_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int no
     return delta;
 }
 
-void write_mapping(const char* filename, int* mapping, int max_node) {
+short* createScoreLookup(Graph* gm, Graph* gf, int* mapping) {
+    LOG_INFO("Creating score lookup...");
+    short* lookup = (short*)calloc(NUM_NODES * NUM_NODES, sizeof(short));
+
+    int count = 0;
+    const int maxCount = NUM_NODES * (NUM_NODES-1) / 2; // 171560026
+
+
+    for (int i = 0; i < NUM_NODES; i++) {
+        lookup[i*NUM_NODES + i] = 0;
+        for (int j = 0; j < i; j++) {
+            count++;
+            if ( (count & 0x3FFFF) == 0 ) {
+                LOG_INFO("Processed %d swaps out of %d - %.2f%% complete", count, maxCount, ((double) count / (double) maxCount)*100.0);
+            }
+            lookup[i*NUM_NODES + j] = calculate_swap_delta(gm, gf, mapping, i+1, j+1);
+            lookup[j*NUM_NODES + i] = lookup[i*NUM_NODES + j];
+        }
+    }
+    
+    return lookup;
+}
+
+void saveLookup(const char* filename, short* lookup) {
     FILE* file = fopen(filename, "w");
     if (!file) {
         LOG_ERROR("Error creating file: %s", filename);
         exit(1);
     }
     
-    fprintf(file, "Male Node ID,Female Node ID\n");
-    for (int i = 1; i <= max_node; i++) {
-        if (mapping[i] != 0) {
-            fprintf(file, "m%d,f%d\n", i, mapping[i]);
+    for (int i = 0; i < NUM_NODES; i++) {
+        for (int j = 0; j < NUM_NODES-1; j++) {
+            fprintf(file, "%d,", lookup[i*NUM_NODES + j]);
         }
+        fprintf(file, "%d", lookup[i*NUM_NODES + NUM_NODES-1]);
+        fprintf(file, "\n");
     }
     
     fclose(file);
@@ -471,130 +377,7 @@ int* load_benchmark_mapping(const char* filename, int max_node) {
     return mapping;
 }
 
-// Save intermediate mapping with verification
-void save_intermediate_mapping(const char* filename, int* mapping, int max_node, 
-                             Graph* gm, Graph* gf, int current_score) {
-    write_mapping(filename, mapping, max_node);
-    
-    // Verify written mapping
-    int* verification = load_benchmark_mapping(filename, max_node);
-    if (verification) {
-        int verify_score = calculate_alignment_score(gm, gf, verification);
-        if (verify_score != current_score) {
-            LOG_ERROR("Score mismatch - internal: %d, written: %d", 
-                     current_score, verify_score);
-        }
-        free(verification);
-    }
-}
 
-// Function to optimize mapping
-int* optimize_mapping(Graph* gm, Graph* gf, int* initial_mapping,
-                     const char* male_ordering_path, const char* female_ordering_path,
-                     const char* out_path) {
-    int max_node = NUM_NODES;
-
-    int* current_mapping = malloc(sizeof(int) * (max_node + 1));
-    int* old_mapping = malloc(sizeof(int) * (max_node + 1));  // For validation
-    memcpy(current_mapping, initial_mapping, sizeof(int) * (max_node + 1));
-    
-    NodeMetrics* metrics_m = calculate_node_metrics(gm, male_ordering_path);
-    NodeMetrics* metrics_f = calculate_node_metrics(gf, female_ordering_path);
-    
-    int current_score = calculate_alignment_score(gm, gf, current_mapping);
-    int outer_node_count = 0;
-    int improvements = 0;
-    time_t start_time = time(NULL);
-    
-    LOG_INFO("Starting optimization with initial score: %s", format_number(current_score));
-    while (true){
-    // Optimization loop
-    for (int node_m1=1; node_m1<=NUM_NODES; node_m1++) {
-        //int node_m1 = gm->nodes[i];
-        outer_node_count++;
-        
-        if (outer_node_count % UPDATE_INTERVAL == 0) {
-            time_t current_time = time(NULL);
-            double elapsed = difftime(current_time, start_time);
-            double nodes_per_sec = outer_node_count / elapsed;
-            
-            LOG_INFO("Optimization progress:");
-            LOG_INFO("  - Processed: %s/%s nodes (%.1f%%)",
-                    format_number(outer_node_count),
-                    format_number(NUM_NODES),
-                    (double)outer_node_count/NUM_NODES * 100);
-            LOG_INFO("  - Current score: %s", format_number(current_score));
-            LOG_INFO("  - Improvements found: %s", format_number(improvements));
-            LOG_INFO("  - Processing speed: %.1f nodes/sec", nodes_per_sec);
-            LOG_INFO("  - Estimated time remaining: %.1f minutes",
-                    (NUM_NODES - outer_node_count) / nodes_per_sec / 60);
-        }
-        
-        if (outer_node_count % SAVE_INTERVAL == 0) {
-            LOG_DEBUG("Saving intermediate mapping to %s", out_path);
-            save_intermediate_mapping(out_path, current_mapping, max_node, 
-                                   gm, gf, current_score);
-        }
-        
-        for (int node_m2=1; node_m2<=NUM_NODES; node_m2++) {
-            //int node_m2 = gm->nodes[j];
-            if (node_m1 == node_m2) continue;
-            
-            int node_f1 = current_mapping[node_m1];
-            int node_f2 = current_mapping[node_m2];
-            
-            double current_sim = calculate_node_similarity(metrics_m[node_m1], metrics_f[node_f1]) +
-                               calculate_node_similarity(metrics_m[node_m2], metrics_f[node_f2]);
-            
-            double swapped_sim = calculate_node_similarity(metrics_m[node_m1], metrics_f[node_f2]) +
-                               calculate_node_similarity(metrics_m[node_m2], metrics_f[node_f1]);
-            
-            if (true) {
-                int delta = calculate_swap_delta(gm, gf, current_mapping, node_m1, node_m2);
-                
-                if (delta > 0) {
-                    // Save current mapping for validation
-                    memcpy(old_mapping, current_mapping, sizeof(int) * (max_node + 1));
-                    
-                    // Make the swap
-                    current_mapping[node_m1] = node_f2;
-                    current_mapping[node_m2] = node_f1;
-                    current_score += delta;
-                    improvements++;
-                    
-                    // Validate changes
-                    validate_mapping_changes(old_mapping, current_mapping, max_node, 
-                                          node_m1, node_m2);
-                    
-                    // Verify score calculation
-                    int verify_score = calculate_alignment_score(gm, gf, current_mapping);
-                    if (verify_score != current_score) {
-                        LOG_ERROR("Score mismatch after swap - calculated: %d, verified: %d",
-                                current_score, verify_score);
-                        current_score = verify_score;  // Trust the verification
-                    }
-                }
-            }
-        }
-    }
-    }
-    
-    time_t end_time = time(NULL);
-    LOG_INFO("Optimization completed:");
-    LOG_INFO("  - Final score: %s", format_number(current_score));
-    LOG_INFO("  - Total improvements: %s", format_number(improvements));
-    LOG_INFO("  - Time taken: %.1f minutes", difftime(end_time, start_time) / 60);
-    
-    // Save final mapping with verification
-    save_intermediate_mapping(out_path, current_mapping, max_node, gm, gf, current_score);
-    
-    free(metrics_m);
-    free(metrics_f);
-    free(old_mapping);
-    return current_mapping;
-}
-
-// Function to get maximum node ID from graph
 int get_max_node(Graph* g) {
     return NUM_NODES;
 }
@@ -627,7 +410,6 @@ void free_graph(Graph* g) {
         free(g->adj_matrix);
         g->adj_matrix=NULL;
     }
-    //free(g->nodes);
     free(g);
 }
 
@@ -671,7 +453,7 @@ Graph* load_graph_from_csv(const char* filename) {
     LOG_INFO("Graph loaded successfully:");
     LOG_INFO("  - Nodes: %s", format_number(NUM_NODES));
     LOG_INFO("  - Edges: %s", format_number(line_count));
-    LOG_INFO("  - Time taken: %ld seconds", end_time - start_time);
+    LOG_INFO("  - Time taken: %lld seconds", end_time - start_time);
     
     fclose(file);
     return graph;
@@ -679,17 +461,17 @@ Graph* load_graph_from_csv(const char* filename) {
 
 // Main function
 int main(int argc, char* argv[]) {
-    if (argc < 7) {
-        LOG_ERROR("Usage: %s <male graph> <female graph> <male ordering> <female ordering> <in mapping> <out mapping>", argv[0]);
+    if (argc < 5) {
+        LOG_ERROR("Usage: %s <male graph> <female graph> <in mapping> <out lookup>", argv[0]);
         return 1;
     }
     
     time_t total_start = time(NULL);
-    LOG_INFO("Graph Alignment Tool v1.0");
+    LOG_INFO("Score Lookup Tool v1.0");
     LOG_INFO("Starting process with:");
     LOG_INFO("  - Male graph: %s", argv[1]);
     LOG_INFO("  - Female graph: %s", argv[2]);
-    LOG_INFO("  - Output mapping: %s", argv[6]);
+    LOG_INFO("  - Output mapping: %s", argv[4]);
     
     Graph* gm = load_graph_from_csv(argv[1]);
     if (!gm) {
@@ -706,32 +488,29 @@ int main(int argc, char* argv[]) {
     
     int max_node = MAX(get_max_node(gm), get_max_node(gf));
     
-    int* benchmark = load_benchmark_mapping(argv[5], max_node);
+    int* benchmark = load_benchmark_mapping(argv[3], max_node);
     if (!benchmark) {
         LOG_ERROR("Failed to load benchmark mapping");
         free_graph(gm);
         free_graph(gf);
         return 1;
     }
+
+    short* lookup = createScoreLookup(gm, gf, benchmark);
+    saveLookup(argv[4], lookup);
     
     int initial_score = calculate_alignment_score(gm, gf, benchmark);
     LOG_INFO("Initial alignment score: %s", format_number(initial_score));
     
-    int* optimized_mapping = optimize_mapping(gm, gf, benchmark, argv[3], argv[4], argv[6]);
-    int optimized_score = calculate_alignment_score(gm, gf, optimized_mapping);
-    
     time_t total_end = time(NULL);
     LOG_INFO("Process completed:");
     LOG_INFO("  - Initial score: %s", format_number(initial_score));
-    LOG_INFO("  - Final score: %s", format_number(optimized_score));
-    LOG_INFO("  - Improvement: %.2f%%",
-            (double)(optimized_score - initial_score) / initial_score * 100.0);
     LOG_INFO("  - Total time: %.1f minutes", difftime(total_end, total_start) / 60);
     
     free_graph(gm);
     free_graph(gf);
+    free(lookup);
     free(benchmark);
-    free(optimized_mapping);
     
     return 0;
 }

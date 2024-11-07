@@ -1,123 +1,30 @@
 package main
 
 import (
-	"bufio"
 	"encoding/csv"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
-	"strings"
-	"container/heap"
 )
 
-type Swap struct{
-	male_node_id int
-	female_node_id int
-	delta int
-}
-
-type BoundedHeap struct {
-	elements []Swap
-	capacity int
-}
-//Max heap
-
-func (h *BoundedHeap) Len() int {
-	return len(h.elements)
-}
-func (h *BoundedHeap) Less(i, j int) bool {
-	return h.elements[i].delta > h.elements[j].delta
-}
-func (h *BoundedHeap) Swap(i, j int) {
-	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
-}
-func (h *BoundedHeap) Push(x interface{}) {
-	if len(h.elements) < h.capacity {
-		heap.Push(h, x)
-	}else if(x.(int) > h.elements[0].delta){
-		heap.Pop(h)
-		heap.Push(h, x)
-	}
-}
-
-func (h *BoundedHeap) Pop() interface{} {
-	x := heap.Pop(h)
-	return x
-}
-
-func newBoundedHeap(capacity int) *BoundedHeap {
-	return &BoundedHeap{
-		elements: make([]int, 0, capacity),
-		capacity: capacity,
-	}
-}
-
-const saveInterval int = 25
 const updateInterval int = 20
 
 const nodeCount int = 18524
 
-// Graph represents a weighted directed graph
-type Graph struct {
-	edges        map[int]map[int]int
+const heapCapacity int = 5000
+
+type AdjacencyMetricsEdges struct {
+	adjMatrix    []int16
+	metrics      [][]int
+	forwardEdges map[int]map[int]int
 	reverseEdges map[int]map[int]int
-	nodes        map[int]struct{}
 }
 
-
-// Creates a new graph
-func NewGraph() *Graph {
-	return &Graph{
-		edges: make(map[int]map[int]int),
-		nodes: make(map[int]struct{}),
-
-		reverseEdges: make(map[int]map[int]int),
-	}
-}
-
-// Adds an edge to the graph
-func (g *Graph) AddEdge(from, to int, weight int) {
-	if g.edges[from] == nil {
-		g.edges[from] = make(map[int]int)
-	}
-	g.edges[from][to] = weight
-
-	if g.reverseEdges[to] == nil {
-		g.reverseEdges[to] = make(map[int]int)
-	}
-	g.reverseEdges[to][from] = weight
-	g.nodes[from] = struct{}{}
-	g.nodes[to] = struct{}{}
-}
-
-// Gets edge weight between nodes (0 if no edge exists)
-func (g *Graph) GetWeight(from, to int) int {
-	if edges, ok := g.edges[from]; ok {
-		return edges[to]
-	}
-	return 0
-}
-
-// Calculates alignment score for current mapping
-func calculateAlignmentScore(gm, gf *Graph, mapping map[int]int) int {
-	var score int
-
-	for srcM := range gm.nodes {
-		for dstM := range gm.edges[srcM] {
-			srcF := mapping[srcM]
-			dstF := mapping[dstM]
-			score += min(gm.edges[srcM][dstM], gf.GetWeight(srcF, dstF))
-		}
-	}
-	return score
-}
-
-// Loads graph from CSV file
-func loadGraphFromCSV(filename string) (*Graph, error) {
+func createAdjacencyMatrix(filename string) AdjacencyMetricsEdges {
 	file, err := os.Open(filename)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	defer file.Close()
 
@@ -125,10 +32,13 @@ func loadGraphFromCSV(filename string) (*Graph, error) {
 	// Skip header
 	_, err = reader.Read()
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 
-	graph := NewGraph()
+	adjMatrix := make([]int16, nodeCount*nodeCount)
+	metrics := make([][]int, nodeCount)
+	forwardEdges := make(map[int]map[int]int)
+	reverseEdges := make(map[int]map[int]int)
 
 	for {
 		record, err := reader.Read()
@@ -145,87 +55,207 @@ func loadGraphFromCSV(filename string) (*Graph, error) {
 		if err != nil {
 			panic(err)
 		}
+		from -= 1
+
 		to, err := strconv.Atoi(record[1])
 		if err != nil {
 			panic(err)
 		}
+		to -= 1
 
-		graph.AddEdge(from, to, weight)
+		adjMatrix[from*nodeCount+to] = int16(weight)
+
+		if forwardEdges[from] == nil {
+			forwardEdges[from] = make(map[int]int)
+		}
+		forwardEdges[from][to] = weight
+
+		if reverseEdges[to] == nil {
+			reverseEdges[to] = make(map[int]int)
+		}
+		reverseEdges[to][from] = weight
+
+		if metrics[from] == nil {
+			metrics[from] = make([]int, 3)
+		}
+
+		if metrics[to] == nil {
+			metrics[to] = make([]int, 3)
+		}
+		// total weight
+		metrics[from][0] += weight
+		metrics[to][0] += weight
+
+		// out degree
+		metrics[from][1]++
+
+		// in degree
+		metrics[to][2]++
+
 	}
-
-	return graph, nil
+	return AdjacencyMetricsEdges{adjMatrix, metrics, forwardEdges, reverseEdges}
 }
 
+// Calculates alignment score for current mapping
+func calculateAlignmentScore(adjMatrixM []int16, adjMatrixF []int16, forwardEdgesM map[int]map[int]int, mapping map[int]int) int {
+	var score int
 
+	for srcM := 0; srcM < nodeCount; srcM++ {
+		for dstM, weightM := range forwardEdgesM[srcM] {
+			srcF := mapping[srcM]
+			dstF := mapping[int(dstM)]
+			score += min(weightM, int(adjMatrixF[srcF*nodeCount+dstF]))
+		}
+	}
+	return score
+}
+
+// Loads benchmark mapping from CSV
+func loadBenchmarkMapping(filename string) (map[int]int, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	// Skip header
+	_, err = reader.Read()
+	if err != nil {
+		return nil, err
+	}
+
+	mapping := make(map[int]int)
+
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			break
+		}
+		from, err := strconv.Atoi(record[0][1:])
+		if err != nil {
+			panic(err)
+		}
+		to, err := strconv.Atoi(record[1][1:])
+		if err != nil {
+			panic(err)
+		}
+		mapping[from-1] = to - 1
+	}
+
+	return mapping, nil
+}
+
+func loadScoreLookup(filename string, heapCapacity int) ([]int16, *SwapHeap, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	scanner := reader
+
+	adjMatrix := make([]int16, nodeCount*nodeCount)
+	heap := NewBoundedMaxHeap(heapCapacity)
+
+	for i := 0; i < nodeCount; i++ {
+		row, err := scanner.Read()
+		if err != nil {
+			return nil, nil, err
+		}
+		if i%1000 == 0 {
+			log.Println("Loaded", i, "rows")
+		}
+		//read the row
+		// fmt.Println("Text: ", text)
+		// row := strings.Split(text, ",")
+		swaps := make([]Swap, 0, 32)
+		for j := 0; j < nodeCount; j++ {
+			delta, err := strconv.Atoi(row[j])
+			if err != nil {
+				log.Println("Erroring row index:", i, "column index:", j)
+				log.Println(row)
+				return nil, nil, err
+			}
+			adjMatrix[i*nodeCount+j] = int16(delta)
+			if delta >= 0 {
+				swaps = append(swaps, Swap{i, j, delta})
+			}
+		}
+		heap.InsertMany(swaps)
+	}
+	return adjMatrix, heap, nil
+}
 
 // Calculate change in alignment score for swapping two nodes
-func calculateSwapDelta(gm, gf *Graph, mapping map[int]int, nodeM1, nodeM2 int) int {
+func calculateSwapDelta(graphM AdjacencyMetricsEdges, graphF AdjacencyMetricsEdges, mapping map[int]int, nodeM1, nodeM2 int) int {
 	nodeF1 := mapping[nodeM1]
 	nodeF2 := mapping[nodeM2]
 	var delta int
 
 	// Remove old contributions
 
-	for node := range gm.edges[nodeM1] {
-		if node == nodeM2 {
+	for node := range graphM.forwardEdges[nodeM1] {
+		if int(node) == nodeM2 {
 			continue
 		}
 		// Outgoing edges from nodeM1
-		weightM := gm.GetWeight(nodeM1, node)
+		weightM := graphM.adjMatrix[nodeM1*nodeCount+node]
 
-		oldF := min(weightM, gf.GetWeight(nodeF1, mapping[node]))
-		newF := min(weightM, gf.GetWeight(nodeF2, mapping[node]))
-		delta += newF - oldF
+		oldF := min(weightM, graphF.adjMatrix[nodeF1*nodeCount+mapping[node]])
+		newF := min(weightM, graphF.adjMatrix[nodeF2*nodeCount+mapping[node]])
+		delta += int(newF - oldF)
 	}
 
-	for node := range gm.edges[nodeM2] {
+	for node := range graphM.forwardEdges[nodeM2] {
 		if node == nodeM1 {
 			continue
 		}
 		// Outgoing edges from nodeM2
-		weightM := gm.GetWeight(nodeM2, node)
+		weightM := graphM.adjMatrix[nodeM2*nodeCount+node]
 
-		oldF := min(weightM, gf.GetWeight(nodeF2, mapping[node]))
-		newF := min(weightM, gf.GetWeight(nodeF1, mapping[node]))
-		delta += newF - oldF
+		oldF := min(weightM, graphF.adjMatrix[nodeF2*nodeCount+mapping[node]])
+		newF := min(weightM, graphF.adjMatrix[nodeF1*nodeCount+mapping[node]])
+		delta += int(newF - oldF)
 	}
 
-	for node := range gm.reverseEdges[nodeM1] {
+	for node := range graphM.reverseEdges[nodeM1] {
 		if node == nodeM2 {
 			continue
 		}
 		// Incoming edges to nodeM1
-		weightM := gm.GetWeight(node, nodeM1)
+		weightM := graphM.adjMatrix[node*nodeCount+nodeM1]
 
-		oldF := min(weightM, gf.GetWeight(mapping[node], nodeF1))
-		newF := min(weightM, gf.GetWeight(mapping[node], nodeF2))
-		delta += newF - oldF
+		oldF := min(weightM, graphF.adjMatrix[mapping[node]*nodeCount+nodeF1])
+		newF := min(weightM, graphF.adjMatrix[mapping[node]*nodeCount+nodeF2])
+		delta += int(newF - oldF)
 	}
 
-	for node := range gm.reverseEdges[nodeM2] {
+	for node := range graphM.reverseEdges[nodeM2] {
 		if node == nodeM1 {
 			continue
 		}
 		// Incoming edges to nodeM2
-		weightM := gm.GetWeight(node, nodeM2)
+		weightM := graphM.adjMatrix[node*nodeCount+nodeM2]
 
-		oldF := min(weightM, gf.GetWeight(mapping[node], nodeF2))
-		newF := min(weightM, gf.GetWeight(mapping[node], nodeF1))
-		delta += newF - oldF
+		oldF := min(weightM, graphF.adjMatrix[mapping[node]*nodeCount+nodeF2])
+		newF := min(weightM, graphF.adjMatrix[mapping[node]*nodeCount+nodeF1])
+		delta += int(newF - oldF)
 	}
 
 	// 3. Edges between nodeM1 and nodeM2
-	weightM12 := gm.GetWeight(nodeM1, nodeM2)
-	weightM21 := gm.GetWeight(nodeM2, nodeM1)
+	weightM12 := graphM.adjMatrix[nodeM1*nodeCount+nodeM2]
+	weightM21 := graphM.adjMatrix[nodeM2*nodeCount+nodeM1]
 	if weightM12 > 0 {
-		oldF := min(weightM12, gf.GetWeight(nodeF1, nodeF2))
-		newF := min(weightM12, gf.GetWeight(nodeF2, nodeF1))
-		delta += newF - oldF
+		oldF := min(weightM12, graphF.adjMatrix[nodeF1*nodeCount+nodeF2])
+		newF := min(weightM12, graphF.adjMatrix[nodeF2*nodeCount+nodeF1])
+		delta += int(newF - oldF)
 	}
 	if weightM21 > 0 {
-		oldF := min(weightM21, gf.GetWeight(nodeF2, nodeF1))
-		newF := min(weightM21, gf.GetWeight(nodeF1, nodeF2))
-		delta += newF - oldF
+		oldF := min(weightM21, graphF.adjMatrix[nodeF2*nodeCount+nodeF1])
+		newF := min(weightM21, graphF.adjMatrix[nodeF1*nodeCount+nodeF2])
+		delta += int(newF - oldF)
 	}
 
 	return delta
@@ -244,134 +274,150 @@ func writeMapping(filename string, mapping map[int]int) {
 	wr.Write(header)
 
 	for male_node_id, female_node_id := range mapping {
-		wr.Write([]string{"m" + strconv.Itoa(male_node_id), "f" + strconv.Itoa(female_node_id)})
+		wr.Write([]string{"m" + strconv.Itoa(male_node_id+1), "f" + strconv.Itoa(female_node_id+1)})
 	}
 
 	wr.Flush()
 }
 
-func loadScoreAdjacency(filename string) []int16 {
-	adjacency := make([]int16, nodeCount*nodeCount)
-	file, err := os.Open(filename)
+func saveSwapMatrix(filename string, swapMatrix []int16) {
+	log.Println("Saving swap matrix...")
+	file, err := os.Create(filename)
 	if err != nil {
 		panic(err)
 	}
-
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Split(bufio.ScanLines)
-	for i := 0; i < nodeCount; i++ {
-		scanner.Scan()
-		line := scanner.Text()
-		if len(line) == 0 {
-			break
-		}
-		tokens := strings.Split(line, ",")
-		for j := 0; j < nodeCount; j++ {
-			delta, err := strconv.Atoi(tokens[j])
-			if err != nil {
-				panic(err)
-			}
-			adjacency[i*nodeCount+j] = int16(delta)
-		}
-	}
+	wr := csv.NewWriter(file)
+	defer wr.Flush()
 
-	return adjacency
+	for i := 0; i < nodeCount; i++ {
+		swaps := make([]string, nodeCount)
+		for j := 0; j < nodeCount; j++ {
+			swaps[j] = strconv.Itoa(int(swapMatrix[i*nodeCount+j]))
+		}
+		wr.Write(swaps)
+		wr.Flush()
+	}
 }
 
 // Optimizes mapping using local search with node similarity heuristics
-func optimizeMapping(gm, gf *Graph, initialMapping map[int]int, maleOrderingPath, femaleOrderingPath, outPath string) map[int]int {
+func optimizeMapping(graphM, graphF AdjacencyMetricsEdges, initialMapping map[int]int, scoreLookup []int16, swapHeap *SwapHeap, outPath string, matrixPath string) map[int]int {
 	currentMapping := make(map[int]int)
 	for k, v := range initialMapping {
 		currentMapping[k] = v
 	}
 
-	currentScore := calculateAlignmentScore(gm, gf, currentMapping)
+	currentScore := calculateAlignmentScore(graphM.adjMatrix, graphF.adjMatrix, graphM.forwardEdges, currentMapping)
 
-	outerNodeCount := 0
-	simPredicted := 0
-	simCorrect := 0
-
-	// Try swapping pairs of mappings
-	for nodeM1 := range gm.nodes {
-		outerNodeCount++
-		if outerNodeCount%updateInterval == 0 {
-			fmt.Printf("%d nodes processed of %d\n", outerNodeCount, len(gm.nodes))
-			fmt.Printf("Predicted: %d, Correct: %d, Accuracy: %.2f\n", simPredicted, simCorrect, float64(simCorrect)/float64(simPredicted))
-			// fmt.Println("Current score: ", currentScore, "Actually: ", calculateAlignmentScore(gm, gf, currentMapping))
-			fmt.Println("Current score: ", currentScore)
-
+	for i := 0; i < 5000; i++ {
+		log.Println("Iteration: ", i, "Score: ", currentScore)
+		if swapHeap.items == nil || len(swapHeap.items) == 0 {
+			saveSwapMatrix(matrixPath, scoreLookup)
+			writeMapping(outPath, currentMapping)
+			log.Println("Error: No swaps found!")
+			return currentMapping
 		}
-		if outerNodeCount%saveInterval == 0 {
+
+		if i%100 == 0 && i != 0 {
+			log.Println("Saving Iteration: ", i, "Score: ", currentScore)
+			saveSwapMatrix(matrixPath, scoreLookup)
 			writeMapping(outPath, currentMapping)
 		}
-		for nodeM2 := range gm.nodes {
-			if nodeM1 == nodeM2 {
+
+		bestSwap, ok := swapHeap.ExtractMax()
+		if !ok {
+			saveSwapMatrix(matrixPath, scoreLookup)
+			writeMapping(outPath, currentMapping)
+			log.Println("Extract max failed")
+			return currentMapping
+		}
+
+		nodeM1, nodeM2, swapDelta := bestSwap.MaleNode1, bestSwap.MaleNode2, bestSwap.Delta
+
+		currentMapping[nodeM1], currentMapping[nodeM2] = currentMapping[nodeM2], currentMapping[nodeM1]
+		currentScore += swapDelta
+
+		scoreLookup[nodeM1*nodeCount+nodeM2] = -int16(swapDelta)
+		scoreLookup[nodeM2*nodeCount+nodeM1] = -int16(swapDelta)
+
+		// swapHeap.RemoveByMale1(nodeM1)
+		// swapHeap.RemoveByMale1(nodeM2)
+		// swapHeap.RemoveByMale2(nodeM1)
+		// swapHeap.RemoveByMale2(nodeM2)
+		swapHeap.RemoveByMale1AndMale2(nodeM1, nodeM2)
+
+		//Update every node in the swap lookup that swapped with either nodeM1 or nodeM2
+		updatedSwaps := make([]Swap, 0, 32)
+		for node := 0; node < nodeCount; node++ {
+			if node == nodeM1 || node == nodeM2 {
 				continue
 			}
 
-			// Calculate similarity scores for current and swapped mappings
-			// nodeF1 := currentMapping[nodeM1]
-			// nodeF2 := currentMapping[nodeM2]
+			delta := int16(calculateSwapDelta(graphM, graphF, currentMapping, node, nodeM1))
+			scoreLookup[node*nodeCount+nodeM1] = delta
+			scoreLookup[nodeM1*nodeCount+node] = delta
 
-		
-			// if swappedSim > currentSim {
-			// 	simPredicted++
-			// 	// Try the swap
-			// 	delta := calculateSwapDelta(gm, gf, currentMapping, nodeM1, nodeM2)
+			if delta >= 0 {
+				updatedSwaps = append(updatedSwaps, Swap{node, nodeM1, int(delta)})
+			}
 
-			// 	if delta > 0 {
-			// 		simCorrect++
-			// 		//Apply the swap
-			// 		currentMapping[nodeM1], currentMapping[nodeM2] = nodeF2, nodeF1
-			// 		currentScore += delta
-			// 	}
-			// }
+			delta = int16(calculateSwapDelta(graphM, graphF, currentMapping, node, nodeM2))
+			scoreLookup[node*nodeCount+nodeM2] = delta
+			scoreLookup[nodeM2*nodeCount+node] = delta
+
+			if delta >= 0 {
+				updatedSwaps = append(updatedSwaps, Swap{node, nodeM2, int(delta)})
+			}
 		}
+
+		swapHeap.InsertMany(updatedSwaps)
 	}
+
+	saveSwapMatrix(matrixPath, scoreLookup)
 
 	return currentMapping
 }
 
 func main() {
 	if len(os.Args) < 7 {
-		fmt.Println("Usage: basic_metrics <male graph> <female graph> <male ordering> <female ordering> <in mapping> <out mapping>")
+		fmt.Println("Usage:", os.Args[0], "<male graph> <female graph> <in mapping> <score lookup> <out mapping> <out matrix>")
 		os.Exit(1)
 	}
 	// Load graphs
-	gm, err := loadGraphFromCSV(os.Args[1])
-	if err != nil {
-		log.Fatal("Error loading male graph:", err)
-	}
-	fmt.Println("Loaded in male graph")
+	graphM := createAdjacencyMatrix(os.Args[1])
+	log.Println("Loaded in male graph")
 
-	gf, err := loadGraphFromCSV(os.Args[2])
-	if err != nil {
-		log.Fatal("Error loading female graph:", err)
-	}
-	fmt.Println("Loaded in female graph")
+	graphF := createAdjacencyMatrix(os.Args[2])
+	log.Println("Loaded in female graph")
 
 	// Load benchmark mapping
-	benchmark, err := loadBenchmarkMapping(os.Args[5])
+	benchmark, err := loadBenchmarkMapping(os.Args[3])
 	if err != nil {
 		log.Fatal("Error loading benchmark mapping:", err)
 	}
-	fmt.Println("Loaded in benchmark mapping")
+	log.Println("Loaded in benchmark mapping")
+
+	// Load score lookup
+	scoreLookup, swapHeap, err := loadScoreLookup(os.Args[4], heapCapacity)
+	if err != nil {
+		log.Fatal("Error loading score lookup/creating swap heap: ", err)
+	}
+	log.Println("Loaded in score lookup and swap heap")
 
 	// Calculate initial score
-	initialScore := calculateAlignmentScore(gm, gf, benchmark)
-	fmt.Printf("Initial alignment score: %d\n", initialScore)
+	initialScore := calculateAlignmentScore(graphM.adjMatrix, graphF.adjMatrix, graphM.forwardEdges, benchmark)
+	log.Printf("Initial alignment score: %d\n", initialScore)
 
-	fmt.Println("Starting optimization...")
+	log.Println("Starting optimization...")
 
 	// Optimize mapping
-	optimizedMapping := optimizeMapping(gm, gf, benchmark, os.Args[3], os.Args[4], os.Args[6])
-	optimizedScore := calculateAlignmentScore(gm, gf, optimizedMapping)
+	optimizedMapping := optimizeMapping(graphM, graphF, benchmark, scoreLookup, swapHeap, os.Args[5], os.Args[6])
+	optimizedScore := calculateAlignmentScore(graphM.adjMatrix, graphF.adjMatrix, graphM.forwardEdges, optimizedMapping)
 
-	fmt.Printf("Optimized alignment score: %d\n", optimizedScore)
-	fmt.Printf("Improvement: %f%%\n", (float64(optimizedScore)-float64(initialScore))/float64(initialScore)*100.0)
+	log.Printf("Optimized alignment score: %d\n", optimizedScore)
+	log.Printf("Improvement: %f%%\n", (float64(optimizedScore)-float64(initialScore))/float64(initialScore)*100.0)
 
 	// Write optimized mapping to CSV
-	writeMapping(os.Args[6], optimizedMapping)
+	writeMapping(os.Args[5], optimizedMapping)
 }
