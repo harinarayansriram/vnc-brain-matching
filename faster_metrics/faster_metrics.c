@@ -399,7 +399,7 @@ void write_mapping(const char* filename, int* mapping, int max_node) {
 }
 
 // Function to load benchmark mapping from CSV
-int* load_benchmark_mapping(const char* filename, int max_node) {
+int* load_mapping(const char* filename, int max_node) {
     FILE* file = fopen(filename, "r");
     if (!file) {
         LOG_ERROR("Failed to open file: %s", filename);
@@ -454,7 +454,7 @@ void save_intermediate_mapping(const char* filename, int* mapping, int max_node,
     write_mapping(filename, mapping, max_node);
     
     // Verify written mapping
-    int* verification = load_benchmark_mapping(filename, max_node);
+    int* verification = load_mapping(filename, max_node);
     if (verification) {
         int verify_score = calculate_alignment_score(gm, gf, verification);
         if (verify_score != current_score) {
@@ -684,7 +684,7 @@ int main(int argc, char* argv[]) {
     // int max_node = MAX(get_max_node(gm), get_max_node(gf));
     const int max_node = NUM_NODES;
     
-    int* benchmark = load_benchmark_mapping(argv[5], max_node);
+    int* benchmark = load_mapping(argv[5], max_node);
     if (!benchmark) {
         LOG_ERROR("Failed to load benchmark mapping");
         free_graph(gm);

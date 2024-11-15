@@ -309,7 +309,7 @@ short* createScoreLookup(Graph* gm, Graph* gf, int* mapping) {
     return lookup;
 }
 
-void saveLookup(const char* filename, short* lookup) {
+void save_lookup(const char* filename, short* lookup) {
     FILE* file = fopen(filename, "w");
     if (!file) {
         LOG_ERROR("Error creating file: %s", filename);
@@ -328,7 +328,7 @@ void saveLookup(const char* filename, short* lookup) {
 }
 
 // Function to load benchmark mapping from CSV
-int* load_benchmark_mapping(const char* filename, int max_node) {
+int* load_mapping(const char* filename, int max_node) {
     FILE* file = fopen(filename, "r");
     if (!file) {
         LOG_ERROR("Failed to open file: %s", filename);
@@ -488,7 +488,7 @@ int main(int argc, char* argv[]) {
     
     int max_node = MAX(get_max_node(gm), get_max_node(gf));
     
-    int* benchmark = load_benchmark_mapping(argv[3], max_node);
+    int* benchmark = load_mapping(argv[3], max_node);
     if (!benchmark) {
         LOG_ERROR("Failed to load benchmark mapping");
         free_graph(gm);
@@ -497,7 +497,7 @@ int main(int argc, char* argv[]) {
     }
 
     short* lookup = createScoreLookup(gm, gf, benchmark);
-    saveLookup(argv[4], lookup);
+    save_lookup(argv[4], lookup);
     
     int initial_score = calculate_alignment_score(gm, gf, benchmark);
     LOG_INFO("Initial alignment score: %s", format_number(initial_score));

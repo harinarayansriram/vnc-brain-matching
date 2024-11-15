@@ -338,8 +338,8 @@ func optimizeMapping(graphM, graphF AdjacencyMetricsEdges, initialMapping map[in
 		currentMapping[nodeM1], currentMapping[nodeM2] = currentMapping[nodeM2], currentMapping[nodeM1]
 		currentScore += swapDelta
 
-		scoreLookup[nodeM1*nodeCount+nodeM2] = -int16(swapDelta)
-		scoreLookup[nodeM2*nodeCount+nodeM1] = -int16(swapDelta)
+		// scoreLookup[nodeM1*nodeCount+nodeM2] = -int16(swapDelta)
+		// scoreLookup[nodeM2*nodeCount+nodeM1] = -int16(swapDelta)
 
 		// swapHeap.RemoveByMale1(nodeM1)
 		// swapHeap.RemoveByMale1(nodeM2)
@@ -350,9 +350,9 @@ func optimizeMapping(graphM, graphF AdjacencyMetricsEdges, initialMapping map[in
 		//Update every node in the swap lookup that swapped with either nodeM1 or nodeM2
 		updatedSwaps := make([]Swap, 0, 32)
 		for node := 0; node < nodeCount; node++ {
-			if node == nodeM1 || node == nodeM2 {
-				continue
-			}
+			// if node == nodeM1 || node == nodeM2 {
+			// 	continue
+			// }
 
 			delta := int16(calculateSwapDelta(graphM, graphF, currentMapping, node, nodeM1))
 			scoreLookup[node*nodeCount+nodeM1] = delta
