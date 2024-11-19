@@ -2,72 +2,68 @@
 
 #include <stdbool.h>
 
-// Forward declarations of opaque structures
-typedef struct SwapHeap SwapHeap;
-
-// Swap structure definition
+// Struct representing a Swap
 typedef struct {
-    int nodeM1;
-    int nodeM2;
-    int delta;
-    int minHeapIndex;  // Position in min heap
-    int maxHeapIndex;  // Position in max heap
+    int nodeM1; // First male node in the swap
+    int nodeM2; // Second male node in the swap
+    double delta;   // Delta value of the swap
 } Swap;
 
-/**
- * Creates a new swap heap with the specified capacity.
- * Implementation uses a dual-heap structure to provide O(log n)
- * operations for both minimum and maximum element access.
- * 
- * @param capacity Maximum number of swaps the heap can hold
- * @return Pointer to the created heap, or NULL if allocation fails
- */
-SwapHeap* create_swap_heap(int capacity);
+// Struct representing a bounded max heap of Swaps
+typedef struct {
+    Swap *data;      // Array of Swaps
+    int capacity;    // Maximum capacity of the heap
+    int size;        // Current number of elements in the heap
+} SwapHeap;
+
+// Function prototypes
 
 /**
- * Inserts a new swap into the heap. If the heap is full but the new swap's
- * delta is greater than the minimum delta in the heap, the minimum element
- * will be evicted and the new swap will be inserted. Operation is O(log n).
- * 
- * @param heap Pointer to the swap heap
- * @param nodeM1 First node of the swap
- * @param nodeM2 Second node of the swap
- * @param delta Priority value for the swap
- * @return true if insertion successful (either direct or via eviction),
- *         false if heap is full and new delta is not better than minimum
+ * Create a max heap with the given capacity.
+ *
+ * @param capacity The maximum number of elements the heap can hold.
+ * @return Pointer to the newly created heap.
  */
-bool insert_swap(SwapHeap* heap, int nodeM1, int nodeM2, int delta);
+SwapHeap *create_swap_heap(int capacity);
 
 /**
- * Extracts the swap with maximum delta from the heap. Operation is O(log n).
- * 
- * @param heap Pointer to the swap heap
- * @param result Pointer to store the extracted swap
- * @return true if extraction successful, false if heap is empty
+ * Insert a new Swap into the heap. If the heap is full and the new Swap's
+ * delta is greater than the smallest delta in the heap, it replaces the
+ * smallest delta Swap.
+ *
+ * @param heap Pointer to the MaxHeap.
+ * @param swap The Swap to insert.
  */
-bool extract_max(SwapHeap* heap, Swap* result);
+void insert_swap(SwapHeap *heap, Swap swap);
 
 /**
- * Invalidates all swaps that contain the specified node value
- * as either nodeM1 or nodeM2. Operation is O(n log n) in worst case
- * where all elements need to be invalidated.
- * 
- * @param heap Pointer to the swap heap
- * @param nodeValue Node value to invalidate
- * @return Number of swaps that were invalidated
+ * Extract the Swap with the highest delta from the heap.
+ *
+ * @param heap Pointer to the MaxHeap.
+ * @return The Swap with the highest delta.
  */
-int invalidate_swaps(SwapHeap* heap, int nodeValue);
+bool extract_max(SwapHeap *heap, Swap *best);
 
 /**
- * Checks if all delta values in the heap are zero.
- * 
- * @param heap Pointer to the swap heap
- * @return true if all delta values are zero, false otherwise
+ * Invalidate Swaps in the heap if either male_node1 or male_node2 matches
+ * the given node. Invalidated swaps are removed from the heap.
+ *
+ * @param heap Pointer to the MaxHeap.
+ * @param node_to_invalidate The node to invalidate.
  */
-bool all_zero_delta(SwapHeap* heap);
+void invalidate_swaps(SwapHeap *heap, int node_to_invalidate);
+
 /**
- * Frees all memory associated with the swap heap.
- * 
- * @param heap Pointer to the swap heap to destroy
+ * Check if all delta values in the heap are zero.
+ *
+ * @param heap Pointer to the MaxHeap.
+ * @return True if all delta values are zero, false otherwise.
  */
-void destroy_swap_heap(SwapHeap* heap);
+bool all_zero_delta(SwapHeap *heap);
+
+/**
+ * Free the memory associated with the heap.
+ *
+ * @param heap Pointer to the MaxHeap.
+ */
+void destroy_swap_heap(SwapHeap *heap);

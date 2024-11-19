@@ -19,6 +19,7 @@ const int HEAP_CAPACITY = 10000;
 const bool ACCEPT_ZERO_DELTA = true;
 const int SAVE_FREQUENCY = 800;
 const int PROBABILISTIC_INTERVAL = 50;
+const int ITERATIONS = 10000;
 
 typedef enum {
   LOG_LEVEL_INFO = 0,
@@ -322,7 +323,7 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
             }
 
             if (lookup[i * NUM_NODES + j] > 0 || (ACCEPT_ZERO_DELTA && lookup[i * NUM_NODES + j] == 0)) {
-                insert_swap(heap, i, j, lookup[i * NUM_NODES + j]);
+                insert_swap(heap, (Swap){i, j, lookup[i * NUM_NODES + j]});
             }
 
             if(lookup[i * NUM_NODES + j] > 0 && prints < maxPrints) {
@@ -340,7 +341,7 @@ void reinsert_into_heap(SwapHeap *heap, short *lookup) {
     for (int i = 1; i <= NUM_NODES; i++) {
         for (int j = 1; j <= NUM_NODES; j++) {
             if (lookup[i * NUM_NODES + j] > 0) {
-                insert_swap(heap, i, j, lookup[i * NUM_NODES + j]);
+                insert_swap(heap, (Swap){i, j, lookup[i * NUM_NODES + j]});
             }
         }
     }
@@ -524,11 +525,11 @@ void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
             lookup[swapNodes[i] * NUM_NODES + node] = (short) swapDelta2;
 
             if (swapDelta1 > 0 || (ACCEPT_ZERO_DELTA && swapDelta1 == 0) ) {
-                insert_swap(swapHeap, node, swapNodes[i], swapDelta1);
+                insert_swap(swapHeap, (Swap){node, swapNodes[i], swapDelta1});
             }
 
             if (swapDelta2 > 0 || (ACCEPT_ZERO_DELTA && swapDelta2 == 0) ) {
-                insert_swap(swapHeap, swapNodes[i], node, swapDelta2);
+                insert_swap(swapHeap, (Swap){swapNodes[i], node, swapDelta2});
             }
         }
     }
@@ -599,48 +600,73 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
     const int probabilisticSwaps = 4;
     const double probabilisticTemperature = 1.0;
 
-    for (int i = 0; i < 1500; i++) {
+    int bestScore = score;
+    bool changed = false;
+
+    for (int i = 0; i < ITERATIONS; i++) {
         if(i % PROBABILISTIC_INTERVAL == 0 && all_zero_delta(swapHeap)){
             LOG_INFO("Performing probabilistic swaps at iteration %d", i);
-            score = probabilistic_swaps(lookup, swapHeap, gm, gf, bestMapping, score, probabilisticSwaps, probabilisticTemperature, false);
+            score = probabilistic_swaps(lookup, swapHeap, gm, gf, inMapping, score, probabilisticSwaps, probabilisticTemperature, false);
         }
         Swap bestSwap;
 
-        if (!extract_max(swapHeap, &bestSwap)) {
+        if(!extract_max(swapHeap, &bestSwap)) {
             LOG_ERROR("Failed to extract swap from heap at iteration %d; most likely heap is empty", i);
             break;
         }
 
         int nodeM1 = bestSwap.nodeM1;
         int nodeM2 = bestSwap.nodeM2;
-
-        int temp = bestMapping[nodeM1];
-        bestMapping[nodeM1] = bestMapping[nodeM2];
-        bestMapping[nodeM2] = temp;
-        
-        int delta = calculate_swap_delta(gm, gf, bestMapping, nodeM1, nodeM2);
+        int delta = bestSwap.delta;
 
         score += delta;
 
+        int temp = inMapping[nodeM1];
+        inMapping[nodeM1] = inMapping[nodeM2];
+        inMapping[nodeM2] = temp;
+        
         invalidate_swaps(swapHeap, nodeM1);
         invalidate_swaps(swapHeap, nodeM2);
 
-        update_lookup_and_heap(lookup, swapHeap, gm, gf, bestMapping, nodeM1, nodeM2);
+        update_lookup_and_heap(lookup, swapHeap, gm, gf, inMapping, nodeM1, nodeM2);
 
         if(i % 100 == 0){
-            LOG_INFO("Iteration %d:\tScore = %d\tActual score: %d", i, score, calculate_alignment_score(gm, gf, bestMapping));
+            int actual_score = calculate_alignment_score(gm, gf, inMapping);
+            LOG_INFO("Iteration %d:\tScore = %d\tActual score: %d", i, score, actual_score);
+            if (actual_score != score){
+                LOG_INFO("Score and actual score do not match, discrepancy of %d", actual_score - score);
+            }
+
+            score = actual_score;
+
+            if(actual_score > bestScore){
+                bestScore = actual_score;
+                changed = true;
+
+                LOG_INFO("New best score: %d", bestScore);
+
+                memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
+            }
         }
 
-        if (i != 0 && i % SAVE_FREQUENCY == 0) {
-            LOG_INFO("Saving mapping and lookup at iteration %d", i);
+        if (changed && i != 0 && i % SAVE_FREQUENCY == 0) {
+            LOG_INFO("Saving mapping and lookup at iteration %d with score %d", i, bestScore);
             save_lookup(outLookupFile, lookup);
             save_mapping(outMappingFile, bestMapping);
+
+            changed = false;
         }
     }
 
     LOG_INFO("Final score: %d", score);
-    LOG_INFO("Final actual score: %d", calculate_alignment_score(gm, gf, bestMapping));
-    LOG_INFO("Saving final mapping and lookup");
+    int final_score = calculate_alignment_score(gm, gf, inMapping);
+    LOG_INFO("Final actual score: %d", calculate_alignment_score(gm, gf, inMapping));
+
+    if(final_score > bestScore){
+        bestScore = final_score;
+        memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
+    }
+    LOG_INFO("Saving final mapping and lookup with score %d", bestScore);
 
     save_lookup(outLookupFile, lookup);
     save_mapping(outMappingFile, bestMapping);
@@ -671,6 +697,7 @@ int main(int argc, char *argv[]) {
 
     Graph *gm, *gf = NULL;
     int *inMapping = NULL;
+    int *bestMapping = NULL;
     short *lookup = NULL;
     SwapHeap *swapHeap = create_swap_heap(HEAP_CAPACITY);
 
@@ -709,11 +736,14 @@ int main(int argc, char *argv[]) {
     int initial_score = calculate_alignment_score(gm, gf, inMapping);
     LOG_INFO("Initial alignment score: %s", format_number(initial_score));
 
-    optimize_mapping(gm, gf, inMapping, lookup, inMapping, swapHeap, argv[5], argv[6]);
+    bestMapping = optimize_mapping(gm, gf, inMapping, lookup, inMapping, swapHeap, argv[5], argv[6]);
+
+    int final_score = calculate_alignment_score(gm, gf, bestMapping);
 
     time_t total_end = time(NULL);
     LOG_INFO("Process completed:");
     LOG_INFO("  - Initial score: %s", format_number(initial_score));
+    LOG_INFO("  - Final score: %s", format_number(final_score));
     LOG_INFO("  - Total time: %.1f minutes",
             difftime(total_end, total_start) / 60);
 
@@ -722,6 +752,7 @@ int main(int argc, char *argv[]) {
         free_graph(gf);
         free(lookup);
         free(inMapping);
+        free(bestMapping);
         destroy_swap_heap(swapHeap);
 
     return EXIT_STATUS;

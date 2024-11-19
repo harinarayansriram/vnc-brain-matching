@@ -52,15 +52,6 @@ typedef struct Graph {
     int node_capacity;
 } Graph;
 
-typedef struct NodeMetrics {
-    int in_degree;
-    int out_degree;
-    int total_weight;
-    double avg_in_weight;
-    double avg_out_weight;
-    int ordering_rank;
-} NodeMetrics;
-
 // Progress bar function
 void print_progress(int current, int total, const char* prefix) {
     const int bar_width = 50;
@@ -131,7 +122,7 @@ Graph* new_graph() {
     g->edges = NULL;
     g->reverse_edges = NULL;
     g->adj_matrix = NULL;
-    g->adj_matrix = (short*)calloc((NUM_NODES+1) * (NUM_NODES+1), sizeof(short*));
+    g->adj_matrix = (short*)calloc((NUM_NODES+1) * (NUM_NODES+1), sizeof(short));
     g->node_capacity = 10000;
     return g;
 }
@@ -404,9 +395,6 @@ void free_graph(Graph* g) {
         free(g->reverse_edges);
     }
     if (g->adj_matrix){
-        // for (int i=0; i<=NUM_NODES; i++){
-        //     free(g->adj_matrix[i]);
-        // }
         free(g->adj_matrix);
         g->adj_matrix=NULL;
     }
