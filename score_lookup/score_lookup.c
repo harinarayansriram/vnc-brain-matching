@@ -14,12 +14,14 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MAX_NODES 100000
 
+#define LOOKUP_BUFFER_SIZE (16 * 1024)  // 16KB buffer
+
 const int NUM_NODES = 18524;
 const int HEAP_CAPACITY = 10000;
 const bool ACCEPT_ZERO_DELTA = true;
 const int SAVE_FREQUENCY = 800;
 const int PROBABILISTIC_INTERVAL = 50;
-const int ITERATIONS = 10000;
+const int ITERATIONS = 60000;
 
 typedef enum {
   LOG_LEVEL_INFO = 0,
@@ -295,7 +297,7 @@ int calculate_swap_delta(Graph *gm, Graph *gf, int *mapping, int node_m1,
     return delta;
 }
 
-short *load_lookup(const char *filename, SwapHeap *heap) {
+short *load_lookup(const char *filename, SwapHeap *swapHeap, SwapHeap *probSwapHeap) {
     LOG_INFO("Loading score lookup...");
 
     FILE *file = fopen(filename, "r");
@@ -323,8 +325,12 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
             }
 
             if (lookup[i * NUM_NODES + j] > 0 || (ACCEPT_ZERO_DELTA && lookup[i * NUM_NODES + j] == 0)) {
-                insert_swap(heap, (Swap){i, j, lookup[i * NUM_NODES + j]});
+                insert_swap(swapHeap, (Swap){i, j, lookup[i * NUM_NODES + j]});
             }
+
+             if(lookup[i * NUM_NODES + j] < 0) {
+                    insert_swap(probSwapHeap, (Swap){i, j, lookup[i * NUM_NODES + j]});
+                }
 
             if(lookup[i * NUM_NODES + j] > 0 && prints < maxPrints) {
                 prints++;
@@ -336,6 +342,92 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
     fclose(file);
     return lookup;
 }
+
+/*
+short *load_lookup(const char *filename, SwapHeap *swapHeap, SwapHeap *probSwapHeap) {
+    LOG_INFO("Loading score lookup...");
+
+    FILE *file = fopen(filename, "rb");  // Open in binary mode
+    if (!file) {
+        LOG_ERROR("Failed to open file: %s", filename);
+        return NULL;
+    }
+
+    // Allocate matrix
+    short *lookup = (short *)calloc((NUM_NODES + 1) * (NUM_NODES + 1), sizeof(short));
+    if (!lookup) {
+        LOG_ERROR("Failed to allocate lookup matrix");
+        fclose(file);
+        return NULL;
+    }
+
+    // Buffer for reading
+    char buffer[LOOKUP_BUFFER_SIZE];
+    char *endptr;
+    int maxPrints = 100;
+    int prints = 0;
+    size_t bytesRead;
+    char *ptr;
+    int i = 1, j = 1;
+    char number[8];  // Buffer for single number
+    int numIdx = 0;
+
+    // Read file in chunks
+    while ((bytesRead = fread(buffer, 1, LOOKUP_BUFFER_SIZE - 1, file)) > 0) {
+        buffer[bytesRead] = '\0';  // Null terminate the buffer
+        ptr = buffer;
+
+        while (*ptr) {
+            if (*ptr >= '0' && *ptr <= '9' || *ptr == '-') {
+                number[numIdx++] = *ptr;
+            }
+            else if (*ptr == ',' && numIdx > 0) {
+                // Process complete number
+                number[numIdx] = '\0';
+                short value = (short)strtol(number, &endptr, 10);
+                
+                lookup[i * NUM_NODES + j] = value;
+                
+                // Batch the conditional operations
+                if (value > 0 || (ACCEPT_ZERO_DELTA && value == 0)) {
+                    insert_swap(swapHeap, (Swap){i, j, value});
+                    
+                    if (value > 0 && prints < maxPrints) {
+                        prints++;
+                        LOG_INFO("Loaded swap (%d, %d) with positive delta %d", i, j, value);
+                    }
+                }
+
+                if(value < 0) {
+                    insert_swap(probSwapHeap, (Swap){i, j, value});
+                }
+
+                // Update indices
+                if (++j > NUM_NODES) {
+                    j = 1;
+                    if (++i > NUM_NODES) break;
+                    if (i % 1000 == 0) print_progress(i, NUM_NODES, "Loading lookup...");
+                }
+                
+                numIdx = 0;
+            }
+            ptr++;
+        }
+
+        // Handle potential partial number at buffer boundary
+        if (numIdx > 0 && bytesRead == LOOKUP_BUFFER_SIZE - 1) {
+            // Move partial number to start of buffer
+            memmove(buffer, buffer + (bytesRead - numIdx), numIdx);
+            bytesRead = numIdx;
+        } else {
+            bytesRead = 0;
+        }
+    }
+
+    fclose(file);
+    return lookup;
+}
+*/
 
 void reinsert_into_heap(SwapHeap *heap, short *lookup) {
     for (int i = 1; i <= NUM_NODES; i++) {
@@ -510,6 +602,25 @@ Graph *load_graph_from_csv(const char *filename) {
     return graph;
 }
 
+void update_heap(short *lookup, SwapHeap *swapHeap, Graph *gm, Graph *gf, int nodeM1, int nodeM2, bool onlyNegative) {
+    for (int node = 1; node <= NUM_NODES; node++) {
+        const int swapNodes[2] = {nodeM1, nodeM2};
+
+        for (int i = 0; i < 2; i++) {
+            int swapDelta1 = lookup[node * NUM_NODES + swapNodes[i]];
+            int swapDelta2 = lookup[swapNodes[i] * NUM_NODES + node];
+
+            if ( !onlyNegative && (swapDelta1 > 0 || (ACCEPT_ZERO_DELTA && swapDelta1 == 0)) || onlyNegative && (swapDelta1 < 0) ) {
+                insert_swap(swapHeap, (Swap){node, swapNodes[i], swapDelta1});
+            }
+
+            if ( !onlyNegative && (swapDelta2 > 0 || (ACCEPT_ZERO_DELTA && swapDelta2 == 0)) || onlyNegative && (swapDelta2 < 0) ) {
+                insert_swap(swapHeap, (Swap){swapNodes[i], node, swapDelta2});
+            }
+        }
+    }
+}
+
 void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
                          Graph *gf, int *bestMapping, int nodeM1, int nodeM2) {
     for (int node = 1; node <= NUM_NODES; node++) {
@@ -546,13 +657,15 @@ static inline bool acceptProbabilisticSwap(int delta, double temperature) {
     return random_double() < exp((double) delta / temperature); 
 }
 
-int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, Graph *gm,
+int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, SwapHeap *probSwapHeap, Graph *gm,
                          Graph *gf, int *bestMapping, int score, int numSwaps, double temperature, bool acceptZeroDelta) {
     
     LOG_INFO("Performing %d probabilistic swaps with temperature %f", numSwaps, temperature);
     int swaps = 0;
     int evaluatedSwaps = 0;
     int newScore = score;
+    /*
+    
     while (swaps < numSwaps) {
         evaluatedSwaps++;
         int nodeM1 = (rand() % (NUM_NODES-1)) + 1;
@@ -584,6 +697,34 @@ int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, Graph *gm,
             update_lookup_and_heap(lookup, swapHeap, gm, gf, bestMapping, nodeM1, nodeM2);
         }
     }
+    */
+
+   for(int i = 0; i < numSwaps; i++){
+       Swap bestProb;
+
+       if(!extract_max(probSwapHeap, &bestProb)) { 
+           LOG_INFO("No more probabilistic swaps");
+           break;
+       }
+
+       int nodeM1 = bestProb.nodeM1;
+       int nodeM2 = bestProb.nodeM2;
+       int delta = bestProb.delta;
+
+       int temp = bestMapping[nodeM1];
+       bestMapping[nodeM1] = bestMapping[nodeM2];
+       bestMapping[nodeM2] = temp;
+
+       newScore += delta;
+
+       invalidate_swaps(swapHeap, nodeM1);
+       invalidate_swaps(swapHeap, nodeM2);
+       invalidate_swaps(probSwapHeap, nodeM1);
+       invalidate_swaps(probSwapHeap, nodeM2);
+       
+       update_lookup_and_heap(lookup, swapHeap, gm, gf, bestMapping, nodeM1, nodeM2);
+       update_heap(lookup, probSwapHeap, gm, gf, nodeM1, nodeM2, true);
+   }
 
     LOG_INFO("Evaluated %d swaps, performed %d swaps", evaluatedSwaps, numSwaps);
     LOG_INFO("New score: %d, actual new score: %d, total delta: %d", newScore, calculate_alignment_score(gm, gf, bestMapping), newScore - score);
@@ -592,7 +733,7 @@ int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, Graph *gm,
 }
 
 int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
-                     int *outMapping, SwapHeap *swapHeap, const char* outMappingFile, const char* outLookupFile) {
+                     int *outMapping, SwapHeap *swapHeap, SwapHeap *probSwapHeap, const char* outMappingFile, const char* outLookupFile) {
     int score = calculate_alignment_score(gm, gf, inMapping);
     int *bestMapping = calloc(NUM_NODES + 1, sizeof(int));
     memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
@@ -606,7 +747,7 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
     for (int i = 0; i < ITERATIONS; i++) {
         if(i % PROBABILISTIC_INTERVAL == 0 && all_zero_delta(swapHeap)){
             LOG_INFO("Performing probabilistic swaps at iteration %d", i);
-            score = probabilistic_swaps(lookup, swapHeap, gm, gf, inMapping, score, probabilisticSwaps, probabilisticTemperature, false);
+            score = probabilistic_swaps(lookup, swapHeap, probSwapHeap, gm, gf, inMapping, score, probabilisticSwaps, probabilisticTemperature, false);
         }
         Swap bestSwap;
 
@@ -700,6 +841,7 @@ int main(int argc, char *argv[]) {
     int *bestMapping = NULL;
     short *lookup = NULL;
     SwapHeap *swapHeap = create_swap_heap(HEAP_CAPACITY);
+    SwapHeap *probSwapHeap = create_swap_heap(HEAP_CAPACITY);
 
     int EXIT_STATUS = 0;
 
@@ -726,7 +868,7 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    lookup = load_lookup(argv[4], swapHeap);
+    lookup = load_lookup(argv[4], swapHeap, probSwapHeap);
     if (!lookup) {
         LOG_ERROR("Failed to load lookup file");
         EXIT_STATUS = 1;
@@ -736,7 +878,7 @@ int main(int argc, char *argv[]) {
     int initial_score = calculate_alignment_score(gm, gf, inMapping);
     LOG_INFO("Initial alignment score: %s", format_number(initial_score));
 
-    bestMapping = optimize_mapping(gm, gf, inMapping, lookup, inMapping, swapHeap, argv[5], argv[6]);
+    bestMapping = optimize_mapping(gm, gf, inMapping, lookup, inMapping, swapHeap, probSwapHeap, argv[5], argv[6]);
 
     int final_score = calculate_alignment_score(gm, gf, bestMapping);
 
@@ -754,6 +896,7 @@ int main(int argc, char *argv[]) {
         free(inMapping);
         free(bestMapping);
         destroy_swap_heap(swapHeap);
+        destroy_swap_heap(probSwapHeap);
 
     return EXIT_STATUS;
 }
