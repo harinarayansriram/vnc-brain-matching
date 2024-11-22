@@ -721,7 +721,7 @@ int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, SwapHeap *probSwapHea
        invalidate_swaps(swapHeap, nodeM2);
        invalidate_swaps(probSwapHeap, nodeM1);
        invalidate_swaps(probSwapHeap, nodeM2);
-       
+
        update_lookup_and_heap(lookup, swapHeap, gm, gf, bestMapping, nodeM1, nodeM2);
        update_heap(lookup, probSwapHeap, gm, gf, nodeM1, nodeM2, true);
    }
@@ -768,8 +768,11 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
         
         invalidate_swaps(swapHeap, nodeM1);
         invalidate_swaps(swapHeap, nodeM2);
+        invalidate_swaps(probSwapHeap, nodeM1);
+        invalidate_swaps(probSwapHeap, nodeM2);
 
         update_lookup_and_heap(lookup, swapHeap, gm, gf, inMapping, nodeM1, nodeM2);
+        update_heap(lookup, probSwapHeap, gm, gf, nodeM1, nodeM2, false);
 
         if(i % 100 == 0){
             int actual_score = calculate_alignment_score(gm, gf, inMapping);
