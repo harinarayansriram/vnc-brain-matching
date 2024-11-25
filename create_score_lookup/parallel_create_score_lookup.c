@@ -4,9 +4,8 @@
 #include <math.h>
 #include <stdbool.h>
 #include <time.h>
-#include <omp.h> // Add OpenMP header
+#include <omp.h>
 
-// [Previous defines and constants remain unchanged]
 #define SAVE_INTERVAL 25
 #define UPDATE_INTERVAL 20
 #define MAX_LINE_LENGTH 1024
@@ -40,8 +39,6 @@ typedef enum {
     }
 
 
-// [Previous type definitions remain unchanged]
-
 // Structure definitions
 typedef struct EdgeMap {
     int* to_nodes;
@@ -56,9 +53,6 @@ typedef struct Graph {
     short* adj_matrix;
     int node_capacity;
 } Graph;
-
-
-// [Previous helper functions like print_progress remain unchanged]
 
 // Function to format numbers with commas
 // Modified to be thread-safe by removing static buffer
@@ -107,7 +101,6 @@ void print_progress(int current, int total, const char* prefix) {
 }
 
 
-// [Previous EdgeMap and Graph management functions remain unchanged]
 EdgeMap* new_edge_map() {
     EdgeMap* em = malloc(sizeof(EdgeMap));
     if (!em) {
@@ -326,7 +319,9 @@ short* createScoreLookup(Graph* gm, Graph* gf, int* mapping) {
             
             // short delta = calculate_swap_delta(gm, gf, mapping, i+1, j+1);
             lookup[i*NUM_NODES + j] = (short) calculate_swap_delta(gm, gf, mapping, i+1, j+1);
-            lookup[j*NUM_NODES + i] = (short) calculate_swap_delta(gm, gf, mapping, j+1, i+1);
+            // lookup[j*NUM_NODES + i] = (short) calculate_swap_delta(gm, gf, mapping, j+1, i+1);
+            lookup[j*NUM_NODES + i] = lookup[i*NUM_NODES + j];
+
             
             #pragma omp atomic
             progress++;
@@ -334,7 +329,7 @@ short* createScoreLookup(Graph* gm, Graph* gf, int* mapping) {
             if ((progress & 0x3FFFF) == 0) {
                 #pragma omp critical
                 {
-                    LOG_INFO("Processed %ld swaps out of %ld - %.2f%% complete", 
+                    LOG_INFO("Processed %ld swaps out of %d - %.2f%% complete", 
                             progress, maxCount, 
                             ((double)progress / (double)maxCount) * 100.0);
                 }

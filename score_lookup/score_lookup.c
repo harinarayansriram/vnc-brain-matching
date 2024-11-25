@@ -15,11 +15,12 @@
 #define MAX_NODES 100000
 
 const int NUM_NODES = 18524;
-const int HEAP_CAPACITY = 100000;
+const int HEAP_CAPACITY = 200000;
 const bool ACCEPT_ZERO_DELTA = true;
 const int SAVE_FREQUENCY = 800;
 const int PROBABILISTIC_INTERVAL = 50;
-const int ITERATIONS = 90000;
+const int ITERATIONS = 200000;
+const int REINSERT_INTERVAL = 50000; //HEAP_CAPACITY / 4; only needs to be HEAP_CAPACITY / 2 (or possibly HEAP_CAPACITY) but just for testing
 
 typedef enum {
   LOG_LEVEL_INFO = 0,
@@ -322,7 +323,7 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
                 return NULL;
             }
 
-            if (lookup[i * NUM_NODES + j] > 0 || (ACCEPT_ZERO_DELTA && lookup[i * NUM_NODES + j] == 0)) {
+            if (i > j && (lookup[i * NUM_NODES + j] > 0 || (ACCEPT_ZERO_DELTA && lookup[i * NUM_NODES + j] == 0))) {
                 insert_swap(heap, (Swap){i, j, lookup[i * NUM_NODES + j]});
             }
 
@@ -340,7 +341,7 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
 void reinsert_into_heap(SwapHeap *heap, short *lookup) {
     for (int i = 1; i <= NUM_NODES; i++) {
         for (int j = 1; j <= NUM_NODES; j++) {
-            if (lookup[i * NUM_NODES + j] > 0) {
+            if (i > j && lookup[i * NUM_NODES + j] > 0 ) {
                 insert_swap(heap, (Swap){i, j, lookup[i * NUM_NODES + j]});
             }
         }
@@ -519,7 +520,8 @@ void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
             // int swapDelta =
             //     calculate_swap_delta(gm, gf, bestMapping, node, swapNodes[i]);
             int swapDelta1 = calculate_swap_delta(gm, gf, bestMapping, node, swapNodes[i]);
-            int swapDelta2 = calculate_swap_delta(gm, gf, bestMapping, swapNodes[i], node);
+            // int swapDelta2 = calculate_swap_delta(gm, gf, bestMapping, swapNodes[i], node);
+            int swapDelta2 = swapDelta1;
 
             lookup[node * NUM_NODES + swapNodes[i]] = (short) swapDelta1;
             lookup[swapNodes[i] * NUM_NODES + node] = (short) swapDelta2;
@@ -528,9 +530,9 @@ void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
                 insert_swap(swapHeap, (Swap){node, swapNodes[i], swapDelta1});
             }
 
-            if (swapDelta2 > 0 || (ACCEPT_ZERO_DELTA && swapDelta2 == 0) ) {
-                insert_swap(swapHeap, (Swap){swapNodes[i], node, swapDelta2});
-            }
+            // if (swapDelta2 > 0 || (ACCEPT_ZERO_DELTA && swapDelta2 == 0) ) {
+            //     insert_swap(swapHeap, (Swap){swapNodes[i], node, swapDelta2});
+            // }
         }
     }
 }
@@ -597,13 +599,19 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
     int *bestMapping = calloc(NUM_NODES + 1, sizeof(int));
     memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
 
-    const int probabilisticSwaps = 4;
+    const int probabilisticSwaps = 6;
     const double probabilisticTemperature = 1.0;
 
     int bestScore = score;
     bool changed = false;
 
     for (int i = 0; i < ITERATIONS; i++) {
+        if(i % REINSERT_INTERVAL == 0){
+            LOG_INFO("Reinserting into heap at iteration %d", i);
+            reinsert_into_heap(swapHeap, lookup);
+            LOG_INFO("Finished reinsertion");
+        } 
+            
         if(i % PROBABILISTIC_INTERVAL == 0 && all_zero_delta(swapHeap)){
             LOG_INFO("Performing probabilistic swaps at iteration %d", i);
             score = probabilistic_swaps(lookup, swapHeap, gm, gf, inMapping, score, probabilisticSwaps, probabilisticTemperature, false);
@@ -744,6 +752,7 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Process completed:");
     LOG_INFO("  - Initial score: %s", format_number(initial_score));
     LOG_INFO("  - Final score: %s", format_number(final_score));
+    LOG_INFO("  - Improvement: %s", format_number(initial_score - final_score));
     LOG_INFO("  - Total time: %.1f minutes",
             difftime(total_end, total_start) / 60);
 
