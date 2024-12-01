@@ -1,11 +1,14 @@
 #include <math.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <time.h>
 
 #include "heap.h"
+#include "xoshiro.h"
 
 #define SAVE_INTERVAL 25
 #define UPDATE_INTERVAL 20
@@ -162,7 +165,7 @@ void add_to_edge_map(EdgeMap *em, int to, int weight) {
 
 void add_edge(Graph *g, int from, int to, int weight) {
     //    LOG_DEBUG("Adding edge: %d -> %d (weight: %d)", from, to, weight);
-    g->adj_matrix[from * NUM_NODES + to] = weight;
+    g->adj_matrix[from * NUM_NODES + to] = (short) weight;
 
     if (g->edges == NULL) {
         g->edges = calloc(MAX_NODES, sizeof(EdgeMap));
@@ -183,10 +186,6 @@ void add_edge(Graph *g, int from, int to, int weight) {
 
     add_to_edge_map(&g->edges[from], to, weight);
     add_to_edge_map(&g->reverse_edges[to], from, weight);
-}
-
-static inline int get_weight(Graph *g, int from, int to) {
-    return g->adj_matrix[from * NUM_NODES + to];
 }
 
 int calculate_alignment_score(Graph *gm, Graph *gf, int *mapping) {
@@ -278,7 +277,7 @@ int calculate_swap_delta(Graph *gm, Graph *gf, int *mapping, int node_m1,
 
     // Handle direct edges between the swapped nodes
     // From m1 to m2
-    int m1_to_m2 = gm->adj_matrix[node_m1 * NUM_NODES + node_m2];
+    short m1_to_m2 = gm->adj_matrix[node_m1 * NUM_NODES + node_m2];
     if (m1_to_m2 > 0) {
         int old_weight = MIN(m1_to_m2, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
         int new_weight = MIN(m1_to_m2, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
@@ -286,10 +285,25 @@ int calculate_swap_delta(Graph *gm, Graph *gf, int *mapping, int node_m1,
     }
 
     // From m2 to m1
-    int m2_to_m1 = gm->adj_matrix[node_m2 * NUM_NODES + node_m1];
+    short m2_to_m1 = gm->adj_matrix[node_m2 * NUM_NODES + node_m1];
     if (m2_to_m1 > 0) {
         int old_weight = MIN(m2_to_m1, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
         int new_weight = MIN(m2_to_m1, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
+        delta += new_weight - old_weight;
+    }
+
+    //Handle direct edges between the resultants (f1 and f2)
+    short f1_to_f2 = gf->adj_matrix[node_f1 * NUM_NODES + node_f2];
+    if (f1_to_f2 > 0) {
+        int old_weight = MIN(f1_to_f2, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
+        int new_weight = MIN(f1_to_f2, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
+        delta += new_weight - old_weight;
+    }
+
+    short f2_to_f1 = gf->adj_matrix[node_f2 * NUM_NODES + node_f1];
+    if (f2_to_f1 > 0) {
+        int old_weight = MIN(f2_to_f1, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
+        int new_weight = MIN(f2_to_f1, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
         delta += new_weight - old_weight;
     }
 
@@ -323,13 +337,15 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
                 return NULL;
             }
 
-            if (i > j && (lookup[i * NUM_NODES + j] > 0 || (ACCEPT_ZERO_DELTA && lookup[i * NUM_NODES + j] == 0))) {
-                insert_swap(heap, (Swap){i, j, lookup[i * NUM_NODES + j]});
+            short delta = lookup[i*NUM_NODES + j];
+
+            if (i > j && (delta > 0 || (ACCEPT_ZERO_DELTA && delta == 0))) {
+                insert_swap(heap, (Swap){i, j, delta});
             }
 
-            if(lookup[i * NUM_NODES + j] > 0 && prints < maxPrints) {
+            if(delta > 0 && prints < maxPrints) {
                 prints++;
-                LOG_INFO("Loaded swap (%d, %d) with positive delta %d", i, j, lookup[i * NUM_NODES + j]);
+                LOG_INFO("Loaded swap (%d, %d) with positive delta %d", i, j, delta);
             }
         }
     }
@@ -517,39 +533,29 @@ void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
         const int swapNodes[2] = {nodeM1, nodeM2};
 
         for (int i = 0; i < 2; i++) {
-            // int swapDelta =
-            //     calculate_swap_delta(gm, gf, bestMapping, node, swapNodes[i]);
-            int swapDelta1 = calculate_swap_delta(gm, gf, bestMapping, node, swapNodes[i]);
-            // int swapDelta2 = calculate_swap_delta(gm, gf, bestMapping, swapNodes[i], node);
-            int swapDelta2 = swapDelta1;
+            int swapDelta = calculate_swap_delta(gm, gf, bestMapping, node, swapNodes[i]);
 
-            lookup[node * NUM_NODES + swapNodes[i]] = (short) swapDelta1;
-            lookup[swapNodes[i] * NUM_NODES + node] = (short) swapDelta2;
+            lookup[node * NUM_NODES + swapNodes[i]] = (short) swapDelta;
+            lookup[swapNodes[i] * NUM_NODES + node] = (short) swapDelta;
 
-            if (swapDelta1 > 0 || (ACCEPT_ZERO_DELTA && swapDelta1 == 0) ) {
-                insert_swap(swapHeap, (Swap){node, swapNodes[i], swapDelta1});
+            if (swapNodes[i] != node && (swapDelta > 0 || (ACCEPT_ZERO_DELTA && swapDelta == 0)) ) {
+                insert_swap(swapHeap, (Swap){node, swapNodes[i], swapDelta});
             }
-
-            // if (swapDelta2 > 0 || (ACCEPT_ZERO_DELTA && swapDelta2 == 0) ) {
-            //     insert_swap(swapHeap, (Swap){swapNodes[i], node, swapDelta2});
-            // }
         }
     }
 }
 
 // Random number between 0 and 1
-double random_double(){
-    unsigned int rnd = rand() & 0x7fff;
-    rnd |= (rand() & 0x7fff) << 15;
-    return (double)rnd / (double)0x3fffffff; //2^30 - 1
+static inline double random_double(struct xoshiro256ss_state *state){
+    return ((double) xoshiro256ss(state)) / (double) UINT64_MAX;
 }
 
-static inline bool acceptProbabilisticSwap(int delta, double temperature) { 
-    return random_double() < exp((double) delta / temperature); 
+static inline bool acceptProbabilisticSwap(int delta, double temperature, struct xoshiro256ss_state *state) { 
+    return random_double(state) < exp((double) delta / temperature); 
 }
 
 int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, Graph *gm,
-                         Graph *gf, int *bestMapping, int score, int numSwaps, double temperature, bool acceptZeroDelta) {
+                         Graph *gf, int *bestMapping, int score, int numSwaps, double temperature, bool acceptZeroDelta, struct xoshiro256ss_state *state) {
     
     LOG_INFO("Performing %d probabilistic swaps with temperature %f", numSwaps, temperature);
     int swaps = 0;
@@ -557,21 +563,15 @@ int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, Graph *gm,
     int newScore = score;
     while (swaps < numSwaps) {
         evaluatedSwaps++;
-        int nodeM1 = (rand() % (NUM_NODES-1)) + 1;
-        int nodeM2 = rand() % NUM_NODES + 1;
-        if (nodeM1 == nodeM2) nodeM2++;
+        int nodeM1 = (int) (xoshiro256ss(state) % (NUM_NODES-1)) + 1;
+        int nodeM2 = (int) (xoshiro256ss(state) % NUM_NODES) + 1;
+        if (nodeM1 == nodeM2) nodeM1++;
 
         int delta = lookup[nodeM1 * NUM_NODES + nodeM2];
 
-        if(evaluatedSwaps == 1){
-            LOG_INFO("First swap delta: %d", delta);
-            LOG_INFO("Actual delta: %d", calculate_swap_delta(gm, gf, bestMapping, nodeM1, nodeM2));
-        }
-        // int delta = calculate_swap_delta(gm, gf, bestMapping, nodeM1, nodeM2);
-
         if (delta == 0 && !acceptZeroDelta) continue;
 
-        if(delta > 0 || (acceptZeroDelta && delta == 0) || acceptProbabilisticSwap(delta, temperature)) {
+        if(delta > 0 || (acceptZeroDelta && delta == 0) || acceptProbabilisticSwap(delta, temperature, state)) {
             swaps++;
             
             int temp = bestMapping[nodeM1];
@@ -593,6 +593,71 @@ int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, Graph *gm,
     return newScore;
 }
 
+int simulated_annealing(short *lookup, SwapHeap *swapHeap, Graph *gm,
+                         Graph *gf, int *inMapping, int score, int iterations, double tmin, double tmax, struct xoshiro256ss_state *state) {
+    LOG_INFO("Performing %d simulated annealing iterations from T=%.2lf to T=%.2lf", iterations, tmax, tmin);
+    
+    double t_factor = log(tmin / tmax);
+
+    int curScore = score;
+    int swaps = 0;
+
+    int* bestMapping = calloc(NUM_NODES + 1, sizeof(int));
+    int bestScore = score;
+
+    memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
+
+    for(int i = 0; i < iterations; i++){
+        
+        double temperature = tmax * exp(t_factor * i / (double) iterations);
+        
+        if(i % 10000000 == 0){
+            LOG_INFO("Iteration %d of %d (%.2f%% complete, T=%.2lf). Performed %d swaps. Current score: %d, best score: %d", i, iterations, 100.0 * i / iterations, temperature, swaps, curScore, bestScore);
+        }
+
+        int nodeM1 = (int) (xoshiro256ss(state) % (NUM_NODES-1)) + 1;
+        int nodeM2 = (int) (xoshiro256ss(state) % NUM_NODES) + 1;
+        if (nodeM1 == nodeM2) nodeM1++;
+
+        if(nodeM1 == 0 || nodeM2 == 0){
+            LOG_DEBUG("Swap with node 0 in iteration %d of simulated annealing", i);
+            continue;
+        }
+
+        if(nodeM1 == nodeM2){
+            LOG_DEBUG("Swap with same node in iteration %d of simulated annealing", i);
+            continue;
+        }
+
+        int delta = lookup[nodeM1 * NUM_NODES + nodeM2];
+
+        if (delta >= 0 || acceptProbabilisticSwap(delta, temperature, state) ) {
+            swaps++;
+
+            int temp = inMapping[nodeM1];
+            inMapping[nodeM1] = inMapping[nodeM2];
+            inMapping[nodeM2] = temp;
+            
+            curScore += delta;
+
+            invalidate_swaps(swapHeap, nodeM1);
+            invalidate_swaps(swapHeap, nodeM2);
+
+            update_lookup_and_heap(lookup, swapHeap, gm, gf, inMapping, nodeM1, nodeM2);
+            
+            if(curScore > bestScore){
+                bestScore = curScore;
+                memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
+            }
+        }
+    }
+
+    LOG_INFO("Performed %d swaps", swaps);
+    LOG_INFO("New score: %d, actual new score: %d, total delta: %d", curScore, calculate_alignment_score(gm, gf, inMapping), curScore - score);
+
+    return calculate_alignment_score(gm, gf, inMapping);
+}
+
 int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
                      int *outMapping, SwapHeap *swapHeap, const char* outMappingFile, const char* outLookupFile) {
     int score = calculate_alignment_score(gm, gf, inMapping);
@@ -605,17 +670,28 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
     int bestScore = score;
     bool changed = false;
 
+    xoshiro256ss_state state;
+    xoshiro256ss_init(&state, time(NULL));
+
     for (int i = 0; i < ITERATIONS; i++) {
         if(i % REINSERT_INTERVAL == 0){
             LOG_INFO("Reinserting into heap at iteration %d", i);
             reinsert_into_heap(swapHeap, lookup);
             LOG_INFO("Finished reinsertion");
         } 
-            
-        if(i % PROBABILISTIC_INTERVAL == 0 && all_zero_delta(swapHeap)){
-            LOG_INFO("Performing probabilistic swaps at iteration %d", i);
-            score = probabilistic_swaps(lookup, swapHeap, gm, gf, inMapping, score, probabilisticSwaps, probabilisticTemperature, false);
+
+        if(i % PROBABILISTIC_INTERVAL == 0 && no_positive_deltas(swapHeap)){
+            if(i % (50*PROBABILISTIC_INTERVAL) == 0){
+                LOG_INFO("Performing simulated annealing at iteration %d", i);
+                score = simulated_annealing(lookup, swapHeap, gm, gf, inMapping, score, (int) 5*pow(10,7), 0.1, 1.0, &state);
+            }else{
+                LOG_INFO("Performing probabilistic swaps at iteration %d", i);
+                score = probabilistic_swaps(lookup, swapHeap, gm, gf, inMapping, score, probabilisticSwaps, probabilisticTemperature, false, &state);
+            }
+
+            reinsert_into_heap(swapHeap, lookup);
         }
+
         Swap bestSwap;
 
         if(!extract_max(swapHeap, &bestSwap)) {
@@ -626,6 +702,26 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
         int nodeM1 = bestSwap.nodeM1;
         int nodeM2 = bestSwap.nodeM2;
         int delta = bestSwap.delta;
+
+        if(nodeM1 == 0 || nodeM2 == 0){
+            LOG_DEBUG("Swap with node 0 in iteration %d of optimize_mapping", i);
+            invalidate_swaps(swapHeap, 0);
+            update_lookup_and_heap(lookup, swapHeap, gm, gf, inMapping, 0, MAX(nodeM1, nodeM2));
+            continue;
+        }
+
+        if(nodeM1 == nodeM2){
+            LOG_DEBUG("Swap with same node (%d) in iteration %d of optimize_mapping", i, nodeM1);
+            invalidate_swaps(swapHeap, nodeM1);
+            update_lookup_and_heap(lookup, swapHeap, gm, gf, inMapping, nodeM1, nodeM2);
+            continue;
+        }
+
+        if(i % 100 == 0){
+            LOG_INFO("Best Swap: Score = %d\tDelta = %d\tNode 1 = %d\tNode 2 = %d, All zero delta: %s", score, delta, nodeM1, nodeM2, no_positive_deltas(swapHeap) ? "yes" : "no");
+            invalidate_swaps(swapHeap, nodeM1);
+            invalidate_swaps(swapHeap, nodeM2);
+        }
 
         score += delta;
 
@@ -640,7 +736,7 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
 
         if(i % 100 == 0){
             int actual_score = calculate_alignment_score(gm, gf, inMapping);
-            LOG_INFO("Iteration %d:\tScore = %d\tActual score: %d", i, score, actual_score);
+            LOG_INFO("Iteration %d:\tScore = %d\tActual score: %d\tHeap size: %d", i, score, actual_score, swapHeap->size);
             if (actual_score != score){
                 LOG_INFO("Score and actual score do not match, discrepancy of %d", actual_score - score);
             }
@@ -690,8 +786,6 @@ int main(int argc, char *argv[]) {
             argv[0]);
         return 1;
     }
-
-    srand(time(NULL));
 
     time_t total_start = time(NULL);
     LOG_INFO("Score Lookup Tool v1.0");

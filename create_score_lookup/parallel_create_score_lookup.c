@@ -151,7 +151,7 @@ void add_to_edge_map(EdgeMap* em, int to, int weight) {
 
 void add_edge(Graph* g, int from, int to, int weight) {
   //    LOG_DEBUG("Adding edge: %d -> %d (weight: %d)", from, to, weight);
-    g->adj_matrix[from*NUM_NODES + to] = weight;
+    g->adj_matrix[from*NUM_NODES + to] = (short) weight;
     if (g->edges == NULL) {
         g->edges = calloc(MAX_NODES, sizeof(EdgeMap));
         g->reverse_edges = calloc(MAX_NODES, sizeof(EdgeMap));
@@ -171,11 +171,6 @@ void add_edge(Graph* g, int from, int to, int weight) {
     add_to_edge_map(&g->edges[from], to, weight);
     add_to_edge_map(&g->reverse_edges[to], from, weight);
 }
-
-inline int get_weight(Graph* g, int from, int to) {
-    return g->adj_matrix[from*NUM_NODES + to];
-}
-
 
 // Parallelized version of calculate_alignment_score
 int calculate_alignment_score(Graph* gm, Graph* gf, int* mapping) {
@@ -272,7 +267,7 @@ int calculate_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int no
     
     // Handle direct edges between the swapped nodes
     // From m1 to m2
-    int m1_to_m2 = gm->adj_matrix[node_m1*NUM_NODES + node_m2];
+    short m1_to_m2 = gm->adj_matrix[node_m1*NUM_NODES + node_m2];
     if (m1_to_m2 > 0) {
         int old_weight = MIN(m1_to_m2, gf->adj_matrix[node_f1*NUM_NODES + node_f2]);
         int new_weight = MIN(m1_to_m2, gf->adj_matrix[node_f2*NUM_NODES + node_f1]);
@@ -280,7 +275,7 @@ int calculate_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int no
     }
     
     // From m2 to m1
-    int m2_to_m1 = gm->adj_matrix[node_m2*NUM_NODES + node_m1];
+    short m2_to_m1 = gm->adj_matrix[node_m2*NUM_NODES + node_m1];
     if (m2_to_m1 > 0) {
         int old_weight = MIN(m2_to_m1, gf->adj_matrix[node_f2*NUM_NODES + node_f1]);
         int new_weight = MIN(m2_to_m1, gf->adj_matrix[node_f1*NUM_NODES + node_f2]);
