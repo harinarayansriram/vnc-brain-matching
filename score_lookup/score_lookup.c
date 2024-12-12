@@ -21,9 +21,14 @@ const int NUM_NODES = 18524;
 const int HEAP_CAPACITY = 200000;
 const bool ACCEPT_ZERO_DELTA = true;
 const int SAVE_FREQUENCY = 800;
-const int PROBABILISTIC_INTERVAL = 50;
-const int ITERATIONS = 200000;
+const int ITERATIONS = 2000000;
 const int REINSERT_INTERVAL = 50000; //HEAP_CAPACITY / 4; only needs to be HEAP_CAPACITY / 2 (or possibly HEAP_CAPACITY) but just for testing
+
+const bool PROBABILISTIC = true;
+const bool SIMULATED_ANNEALING = true;
+const int PROBABILISTIC_INTERVAL = 200;
+const int probabilisticSwaps = 12;
+const double probabilisticTemperature = 1.0;
 
 typedef enum {
   LOG_LEVEL_INFO = 0,
@@ -293,19 +298,19 @@ int calculate_swap_delta(Graph *gm, Graph *gf, int *mapping, int node_m1,
     }
 
     //Handle direct edges between the resultants (f1 and f2)
-    short f1_to_f2 = gf->adj_matrix[node_f1 * NUM_NODES + node_f2];
-    if (f1_to_f2 > 0) {
-        int old_weight = MIN(f1_to_f2, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
-        int new_weight = MIN(f1_to_f2, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
-        delta += new_weight - old_weight;
-    }
+    // short f1_to_f2 = gf->adj_matrix[node_f1 * NUM_NODES + node_f2];
+    // if (f1_to_f2 > 0) {
+    //     int old_weight = MIN(f1_to_f2, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
+    //     int new_weight = MIN(f1_to_f2, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
+    //     delta += new_weight - old_weight;
+    // }
 
-    short f2_to_f1 = gf->adj_matrix[node_f2 * NUM_NODES + node_f1];
-    if (f2_to_f1 > 0) {
-        int old_weight = MIN(f2_to_f1, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
-        int new_weight = MIN(f2_to_f1, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
-        delta += new_weight - old_weight;
-    }
+    // short f2_to_f1 = gf->adj_matrix[node_f2 * NUM_NODES + node_f1];
+    // if (f2_to_f1 > 0) {
+    //     int old_weight = MIN(f2_to_f1, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
+    //     int new_weight = MIN(f2_to_f1, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
+    //     delta += new_weight - old_weight;
+    // }
 
     return delta;
 }
@@ -354,10 +359,10 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
     return lookup;
 }
 
-void reinsert_into_heap(SwapHeap *heap, short *lookup) {
+void reinsert_into_heap(SwapHeap *heap, short *lookup, bool acceptZero) {
     for (int i = 1; i <= NUM_NODES; i++) {
         for (int j = 1; j <= NUM_NODES; j++) {
-            if (i > j && lookup[i * NUM_NODES + j] > 0 ) {
+            if (i > j && (lookup[i * NUM_NODES + j] > 0 || (acceptZero && lookup[i * NUM_NODES + j] == 0))) {
                 insert_swap(heap, (Swap){i, j, lookup[i * NUM_NODES + j]});
             }
         }
@@ -664,11 +669,10 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
     int *bestMapping = calloc(NUM_NODES + 1, sizeof(int));
     memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
 
-    const int probabilisticSwaps = 6;
-    const double probabilisticTemperature = 1.0;
-
     int bestScore = score;
     bool changed = false;
+
+    int lastImproved = 0;
 
     xoshiro256ss_state state;
     xoshiro256ss_init(&state, time(NULL));
@@ -676,27 +680,29 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
     for (int i = 0; i < ITERATIONS; i++) {
         if(i % REINSERT_INTERVAL == 0){
             LOG_INFO("Reinserting into heap at iteration %d", i);
-            reinsert_into_heap(swapHeap, lookup);
+            reinsert_into_heap(swapHeap, lookup, true);
             LOG_INFO("Finished reinsertion");
         } 
 
-        if(i % PROBABILISTIC_INTERVAL == 0 && no_positive_deltas(swapHeap)){
-            if(i % (50*PROBABILISTIC_INTERVAL) == 0){
+        if( (PROBABILISTIC || SIMULATED_ANNEALING) && (i - lastImproved) > 1500 && i % PROBABILISTIC_INTERVAL == 0 && no_positive_deltas(swapHeap)){
+            if(SIMULATED_ANNEALING && i % (10*PROBABILISTIC_INTERVAL) == 0){
                 LOG_INFO("Performing simulated annealing at iteration %d", i);
                 score = simulated_annealing(lookup, swapHeap, gm, gf, inMapping, score, (int) 5*pow(10,7), 0.1, 1.0, &state);
-            }else{
+            }else if(PROBABILISTIC){
                 LOG_INFO("Performing probabilistic swaps at iteration %d", i);
                 score = probabilistic_swaps(lookup, swapHeap, gm, gf, inMapping, score, probabilisticSwaps, probabilisticTemperature, false, &state);
             }
 
-            reinsert_into_heap(swapHeap, lookup);
+            reinsert_into_heap(swapHeap, lookup, true);
         }
 
         Swap bestSwap;
 
-        if(!extract_max(swapHeap, &bestSwap)) {
-            LOG_ERROR("Failed to extract swap from heap at iteration %d; most likely heap is empty", i);
-            break;
+        while(!extract_max(swapHeap, &bestSwap)) {
+            // LOG_ERROR("Failed to extract swap from heap at iteration %d; most likely heap is empty", i);
+            // break;
+            LOG_INFO("Reinserting into heap at iteration %d", i);
+            reinsert_into_heap(swapHeap, lookup, true);
         }
 
         int nodeM1 = bestSwap.nodeM1;
@@ -734,6 +740,9 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
 
         update_lookup_and_heap(lookup, swapHeap, gm, gf, inMapping, nodeM1, nodeM2);
 
+        invalidate_swaps(swapHeap, nodeM1);
+        invalidate_swaps(swapHeap, nodeM2);
+
         if(i % 100 == 0){
             int actual_score = calculate_alignment_score(gm, gf, inMapping);
             LOG_INFO("Iteration %d:\tScore = %d\tActual score: %d\tHeap size: %d", i, score, actual_score, swapHeap->size);
@@ -746,6 +755,7 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             if(actual_score > bestScore){
                 bestScore = actual_score;
                 changed = true;
+                lastImproved = i;
 
                 LOG_INFO("New best score: %d", bestScore);
 
@@ -755,7 +765,7 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
 
         if (changed && i != 0 && i % SAVE_FREQUENCY == 0) {
             LOG_INFO("Saving mapping and lookup at iteration %d with score %d", i, bestScore);
-            save_lookup(outLookupFile, lookup);
+            // save_lookup(outLookupFile, lookup);
             save_mapping(outMappingFile, bestMapping);
 
             changed = false;

@@ -281,6 +281,21 @@ int calculate_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int no
         int new_weight = MIN(m2_to_m1, gf->adj_matrix[node_f1*NUM_NODES + node_f2]);
         delta += new_weight - old_weight;
     }
+
+    //Handle direct edges between the resultants (f1 and f2)
+    // short f1_to_f2 = gf->adj_matrix[node_f1 * NUM_NODES + node_f2];
+    // if (f1_to_f2 > 0) {
+    //     int old_weight = MIN(f1_to_f2, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
+    //     int new_weight = MIN(f1_to_f2, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
+    //     delta += new_weight - old_weight;
+    // }
+
+    // short f2_to_f1 = gf->adj_matrix[node_f2 * NUM_NODES + node_f1];
+    // if (f2_to_f1 > 0) {
+    //     int old_weight = MIN(f2_to_f1, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
+    //     int new_weight = MIN(f2_to_f1, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
+    //     delta += new_weight - old_weight;
+    // }
     
     return delta;
 }
