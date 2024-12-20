@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <string.h>
 #include <time.h>
+#include <omp.h>
 
 #include "heap.h"
 #include "xoshiro.h"
@@ -299,7 +300,7 @@ int calculate_swap_delta(Graph *gm, Graph *gf, int *mapping, int node_m1,
 
     //Handle direct edges between the resultants (f1 and f2)
     // short f1_to_f2 = gf->adj_matrix[node_f1 * NUM_NODES + node_f2];
-    // if (f1_to_f2 > 0) {
+    // if (f1_to_f2 > 0) { 
     //     int old_weight = MIN(f1_to_f2, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
     //     int new_weight = MIN(f1_to_f2, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
     //     delta += new_weight - old_weight;
@@ -534,19 +535,44 @@ Graph *load_graph_from_csv(const char *filename) {
 
 void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
                          Graph *gf, int *bestMapping, int nodeM1, int nodeM2) {
-    for (int node = 1; node <= NUM_NODES; node++) {
-        const int swapNodes[2] = {nodeM1, nodeM2};
+    // Use OpenMP to parallelize the nested loops
+    #pragma omp parallel
+    {
+        // Create thread-local heaps to avoid contention
+        SwapHeap *local_heap = create_swap_heap(1000);
 
-        for (int i = 0; i < 2; i++) {
-            int swapDelta = calculate_swap_delta(gm, gf, bestMapping, node, swapNodes[i]);
+        #pragma omp for schedule(dynamic)
+        for (int node = 1; node <= NUM_NODES; node++) {
+            const int swapNodes[2] = {nodeM1, nodeM2};
 
-            lookup[node * NUM_NODES + swapNodes[i]] = (short) swapDelta;
-            lookup[swapNodes[i] * NUM_NODES + node] = (short) swapDelta;
+            for (int i = 0; i < 2; i++) {
+                // Calculate swap delta, which is thread-safe as it doesn't modify shared state
+                int swapDelta = calculate_swap_delta(gm, gf, bestMapping, node, swapNodes[i]);
 
-            if (swapNodes[i] != node && (swapDelta > 0 || (ACCEPT_ZERO_DELTA && swapDelta == 0)) ) {
-                insert_swap(swapHeap, (Swap){node, swapNodes[i], swapDelta});
+                // Use atomic updates to safely modify shared lookup array
+                #pragma omp critical
+                {
+                    lookup[node * NUM_NODES + swapNodes[i]] = (short) swapDelta;
+                    lookup[swapNodes[i] * NUM_NODES + node] = (short) swapDelta;
+                }
+
+                // Collect swaps with positive or zero delta
+                if (swapNodes[i] != node && (swapDelta > 0 || (ACCEPT_ZERO_DELTA && swapDelta == 0))) {
+                    insert_swap(local_heap, (Swap){node, swapNodes[i], swapDelta});
+                }
             }
         }
+
+        // Merge local heap into global heap with a critical section
+        #pragma omp critical
+        {
+            for (int i = 0; i < local_heap->size; i++) {
+                insert_swap(swapHeap, local_heap->data[i]);
+            }
+        }
+
+        // Clean up local heap
+        destroy_swap_heap(local_heap);
     }
 }
 
