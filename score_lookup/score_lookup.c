@@ -10,311 +10,26 @@
 
 #include "heap.h"
 #include "xoshiro.h"
-
-#define SAVE_INTERVAL 25
-#define UPDATE_INTERVAL 20
-#define MAX_LINE_LENGTH 1024
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define MAX_NODES 100000
-
-const int NUM_NODES = 18524;
-const int HEAP_CAPACITY = 200000;
-const bool ACCEPT_ZERO_DELTA = true;
-const int SAVE_FREQUENCY = 800;
-const int ITERATIONS = 2000000;
-const int REINSERT_INTERVAL = 50000; //HEAP_CAPACITY / 4; only needs to be HEAP_CAPACITY / 2 (or possibly HEAP_CAPACITY) but just for testing
-
-const bool PROBABILISTIC = true;
-const bool SIMULATED_ANNEALING = true;
-const int PROBABILISTIC_INTERVAL = 200;
-const int probabilisticSwaps = 12;
-const double probabilisticTemperature = 1.0;
-
-typedef enum {
-  LOG_LEVEL_INFO = 0,
-  LOG_LEVEL_DEBUG = 1,
-  LOG_LEVEL_ERROR = 2
-} LogLevel;
+#include "utils.h"
+#include "hungarian-subset.h"
 
 #define CURRENT_LOG_LEVEL LOG_LEVEL_INFO
 
-#define LOG_ERROR(fmt, ...)                                         \
-    if (CURRENT_LOG_LEVEL <= LOG_LEVEL_ERROR) {                       \
-    fprintf(stderr, "[ERROR] %s:%d: " fmt "\n", __func__, __LINE__, \
-            ##__VA_ARGS__);                                         \
-    }
+const int HEAP_CAPACITY = 200 * 1000;
+const bool ACCEPT_ZERO_DELTA = true;
+const int SAVE_FREQUENCY = 800;
+const int ITERATIONS = 2 * 1000 * 1000;
+const int REINSERT_INTERVAL = 50 * 1000; //HEAP_CAPACITY / 4; only needs to be HEAP_CAPACITY / 2 (or possibly HEAP_CAPACITY) but just for testing
 
-#define LOG_INFO(fmt, ...)                     \
-    if (CURRENT_LOG_LEVEL <= LOG_LEVEL_INFO) {   \
-    printf("[INFO] " fmt "\n", ##__VA_ARGS__); \
-    }
-
-#define LOG_DEBUG(fmt, ...)                                   \
-    if (CURRENT_LOG_LEVEL <= LOG_LEVEL_DEBUG) {                 \
-    printf("[DEBUG] %s: " fmt "\n", __func__, ##__VA_ARGS__); \
-    }
-
-// Structure definitions
-typedef struct EdgeMap {
-    int *to_nodes;
-    int *weights;
-    int count;
-    int capacity;
-} EdgeMap;
-
-typedef struct Graph {
-    EdgeMap *edges;
-    EdgeMap *reverse_edges;
-    short *adj_matrix;
-    int node_capacity;
-} Graph;
-
-// Progress bar function
-void print_progress(int current, int total, const char *prefix) {
-    const int bar_width = 50;
-    float progress = (float)current / total;
-    int filled = (int)(bar_width * progress);
-
-    printf("\r%s [", prefix);
-    for (int i = 0; i < bar_width; i++) {
-    if (i < filled)
-        printf("=");
-    else if (i == filled)
-        printf(">");
-    else
-        printf(" ");
-    }
-    printf("] %.1f%%", progress * 100);
-    fflush(stdout);
-    if (current == total) printf("\n");
-}
-
-// Function to format numbers with commas
-char *format_number(int num) {
-    static char formatted[32];
-    char temp[32];
-    int i = 0, j = 0;
-
-    sprintf(temp, "%d", num);
-    int len = strlen(temp);
-
-    while (len > 0) {
-        if (i > 0 && i % 3 == 0) formatted[j++] = ',';
-        
-        formatted[j++] = temp[len - 1];
-        len--;
-        i++;
-    }
-    formatted[j] = '\0';
-
-    // Reverse the string
-    for (i = 0; i < j / 2; i++) {
-        char t = formatted[i];
-        formatted[i] = formatted[j - 1 - i];
-        formatted[j - 1 - i] = t;
-    }
-
-    return formatted;
-}
-
-EdgeMap *new_edge_map() {
-    EdgeMap *em = malloc(sizeof(EdgeMap));
-    if (!em) {
-    LOG_ERROR("Failed to allocate EdgeMap");
-    exit(1);
-    }
-    em->capacity = 100;
-    em->count = 0;
-    em->to_nodes = malloc(sizeof(int) * em->capacity);
-    em->weights = malloc(sizeof(int) * em->capacity);
-    if (!em->to_nodes || !em->weights) {
-        LOG_ERROR("Failed to allocate EdgeMap arrays");
-        exit(1);
-    }
-    return em;
-}
-
-Graph *new_graph() {
-    Graph *g = malloc(sizeof(Graph));
-    if (!g) {
-    LOG_ERROR("Failed to allocate Graph");
-    exit(1);
-    }
-    g->edges = NULL;
-    g->reverse_edges = NULL;
-    g->adj_matrix = NULL;
-    // g->adj_matrix =
-    //     (short *)calloc((NUM_NODES + 1) * (NUM_NODES + 1), sizeof(short *));
-    g->adj_matrix =
-        (short *)calloc((NUM_NODES + 1) * (NUM_NODES + 1), sizeof(short));
-    g->node_capacity = 10000;
-    return g;
-}
-
-void add_to_edge_map(EdgeMap *em, int to, int weight) {
-    if (em->count >= em->capacity) {
-        em->capacity *= 2;
-        int *new_to_nodes = realloc(em->to_nodes, sizeof(int) * em->capacity);
-        int *new_weights = realloc(em->weights, sizeof(int) * em->capacity);
-        if (!new_to_nodes || !new_weights) {
-            LOG_ERROR("Failed to reallocate EdgeMap arrays");
-            exit(1);
-        }
-        em->to_nodes = new_to_nodes;
-        em->weights = new_weights;
-    }
-    em->to_nodes[em->count] = to;
-    em->weights[em->count] = weight;
-    em->count++;
-}
-
-void add_edge(Graph *g, int from, int to, int weight) {
-    //    LOG_DEBUG("Adding edge: %d -> %d (weight: %d)", from, to, weight);
-    g->adj_matrix[from * NUM_NODES + to] = (short) weight;
-
-    if (g->edges == NULL) {
-        g->edges = calloc(MAX_NODES, sizeof(EdgeMap));
-        g->reverse_edges = calloc(MAX_NODES, sizeof(EdgeMap));
-
-        if (!g->edges || !g->reverse_edges) {
-            LOG_ERROR("Failed to allocate edges arrays");
-            exit(1);
-        }
-    }
-
-    if (g->edges[from].count == 0) {
-        g->edges[from] = *new_edge_map();
-    }
-    if (g->reverse_edges[to].count == 0) {
-        g->reverse_edges[to] = *new_edge_map();
-    }
-
-    add_to_edge_map(&g->edges[from], to, weight);
-    add_to_edge_map(&g->reverse_edges[to], from, weight);
-}
-
-int calculate_alignment_score(Graph *gm, Graph *gf, int *mapping) {
-    int score = 0;
-
-    for (int src_m = 1; src_m <= NUM_NODES; src_m++) {
-    // int src_m = gm->i;
-        for (int j = 0; j < gm->edges[src_m].count; j++) {
-            int dst_m = gm->edges[src_m].to_nodes[j];
-            int weight_m = gm->edges[src_m].weights[j];
-            int src_f = mapping[src_m];
-            int dst_f = mapping[dst_m];
-            score += MIN(weight_m, gf->adj_matrix[src_f * NUM_NODES + dst_f]);
-        }
-    }
-
-    return score;
-}
-
-int calculate_swap_delta(Graph *gm, Graph *gf, int *mapping, int node_m1,
-                         int node_m2) {
-    int node_f1 = mapping[node_m1];
-    int node_f2 = mapping[node_m2];
-    int delta = 0;
-
-    // Handle outgoing edges from node_m1
-    for (int i = 0; i < gm->edges[node_m1].count; i++) {
-        int dst_m = gm->edges[node_m1].to_nodes[i];
-        if (dst_m == node_m2) continue;  // Skip direct edge between swapped nodes
-
-        int weight_m = gm->edges[node_m1].weights[i];
-        int dst_f = mapping[dst_m];
-
-        // Remove old contribution
-        int old_weight = MIN(weight_m, gf->adj_matrix[node_f1 * NUM_NODES + dst_f]);
-        // Add new contribution
-        int new_weight = MIN(weight_m, gf->adj_matrix[node_f2 * NUM_NODES + dst_f]);
-
-        delta += new_weight - old_weight;
-    }
-
-    // Handle incoming edges to node_m1
-    for (int i = 0; i < gm->reverse_edges[node_m1].count; i++) {
-        int src_m = gm->reverse_edges[node_m1].to_nodes[i];
-        if (src_m == node_m2) continue;  // Skip direct edge between swapped nodes
-
-        int weight_m = gm->reverse_edges[node_m1].weights[i];
-        int src_f = mapping[src_m];
-
-        // Remove old contribution
-        int old_weight = MIN(weight_m, gf->adj_matrix[src_f * NUM_NODES + node_f1]);
-        // Add new contribution
-        int new_weight = MIN(weight_m, gf->adj_matrix[src_f * NUM_NODES + node_f2]);
-
-        delta += new_weight - old_weight;
-    }
-
-    // Handle outgoing edges from node_m2
-    for (int i = 0; i < gm->edges[node_m2].count; i++) {
-        int dst_m = gm->edges[node_m2].to_nodes[i];
-        if (dst_m == node_m1) continue;  // Skip direct edge between swapped nodes
-
-        int weight_m = gm->edges[node_m2].weights[i];
-        int dst_f = mapping[dst_m];
-
-        // Remove old contribution
-        int old_weight = MIN(weight_m, gf->adj_matrix[node_f2 * NUM_NODES + dst_f]);
-        // Add new contribution
-        int new_weight = MIN(weight_m, gf->adj_matrix[node_f1 * NUM_NODES + dst_f]);
-
-        delta += new_weight - old_weight;
-    }
-
-    // Handle incoming edges to node_m2
-    for (int i = 0; i < gm->reverse_edges[node_m2].count; i++) {
-        int src_m = gm->reverse_edges[node_m2].to_nodes[i];
-        if (src_m == node_m1) continue;  // Skip direct edge between swapped nodes
-
-        int weight_m = gm->reverse_edges[node_m2].weights[i];
-        int src_f = mapping[src_m];
-
-        // Remove old contribution
-        int old_weight = MIN(weight_m, gf->adj_matrix[src_f * NUM_NODES + node_f2]);
-        // Add new contribution
-        int new_weight = MIN(weight_m, gf->adj_matrix[src_f * NUM_NODES + node_f1]);
-
-        delta += new_weight - old_weight;
-    }
-
-    // Handle direct edges between the swapped nodes
-    // From m1 to m2
-    short m1_to_m2 = gm->adj_matrix[node_m1 * NUM_NODES + node_m2];
-    if (m1_to_m2 > 0) {
-        int old_weight = MIN(m1_to_m2, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
-        int new_weight = MIN(m1_to_m2, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
-        delta += new_weight - old_weight;
-    }
-
-    // From m2 to m1
-    short m2_to_m1 = gm->adj_matrix[node_m2 * NUM_NODES + node_m1];
-    if (m2_to_m1 > 0) {
-        int old_weight = MIN(m2_to_m1, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
-        int new_weight = MIN(m2_to_m1, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
-        delta += new_weight - old_weight;
-    }
-
-    //Handle direct edges between the resultants (f1 and f2)
-    // short f1_to_f2 = gf->adj_matrix[node_f1 * NUM_NODES + node_f2];
-    // if (f1_to_f2 > 0) { 
-    //     int old_weight = MIN(f1_to_f2, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
-    //     int new_weight = MIN(f1_to_f2, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
-    //     delta += new_weight - old_weight;
-    // }
-
-    // short f2_to_f1 = gf->adj_matrix[node_f2 * NUM_NODES + node_f1];
-    // if (f2_to_f1 > 0) {
-    //     int old_weight = MIN(f2_to_f1, gf->adj_matrix[node_f2 * NUM_NODES + node_f1]);
-    //     int new_weight = MIN(f2_to_f1, gf->adj_matrix[node_f1 * NUM_NODES + node_f2]);
-    //     delta += new_weight - old_weight;
-    // }
-
-    return delta;
-}
+const bool PROBABILISTIC = true;
+const bool SIMULATED_ANNEALING = true;
+const bool HUNGARIAN = true;
+const int PROBABILISTIC_INTERVAL = 200;
+const int PROBABILISTIC_SWAPS = 12;
+const int SIMULATED_ANNEALING_INTERVAL = 5000;
+const double PROBABILISTIC_TEMPERATURE = 1.0;
+const int HUNGARIAN_ITERS = 1000;
+const int HUNGARIAN_INTERVAL = 1000;
 
 short *load_lookup(const char *filename, SwapHeap *heap) {
     LOG_INFO("Loading score lookup...");
@@ -389,150 +104,6 @@ void save_lookup(const char *filename, short *lookup) {
     fclose(file);
 }
 
-// Function to load benchmark mapping from CSV
-int *load_mapping(const char *filename, int max_node) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        LOG_ERROR("Failed to open file: %s", filename);
-        return NULL;
-    }
-
-    int *mapping = calloc(max_node + 1, sizeof(int));
-    char line[MAX_LINE_LENGTH];
-    int count = 0;
-
-    // Try to get expected score from filename
-    int expected_score = 0;
-    const char *underscore = strrchr(filename, '_');
-    if (underscore) {
-        expected_score = atoi(underscore + 1);
-        LOG_INFO("Expected score from filename: %d", expected_score);
-    }
-
-    // Skip header
-    fgets(line, MAX_LINE_LENGTH, file);
-
-    LOG_INFO("Loading benchmark mapping from %s", filename);
-
-    while (fgets(line, MAX_LINE_LENGTH, file)) {
-        int male_id, female_id;
-
-        // Try direct integer format first
-        if (sscanf(line, "%d,%d", &male_id, &female_id) == 2) {
-            mapping[male_id] = female_id;
-            count++;
-        } else {
-            // Try format with prefixes
-            char male_str[20], female_str[20];
-            if (sscanf(line, "%[^,],%s", male_str, female_str) == 2) {
-                male_id = atoi(male_str + (male_str[0] == 'm' ? 1 : 0));
-                female_id = atoi(female_str + (female_str[0] == 'f' ? 1 : 0));
-                mapping[male_id] = female_id;
-                count++;
-            }
-        }
-    }
-
-    LOG_INFO("Loaded %s mappings", format_number(count));
-
-    fclose(file);
-    return mapping;
-}
-
-void save_mapping(const char *filename, int *mapping) {
-    FILE *file = fopen(filename, "w");
-    if (!file) {
-        LOG_ERROR("Error creating file: %s", filename);
-        fclose(file);
-        return;
-    }
-
-    fprintf(file, "Male Node ID,Female Node ID\n");
-    for (int i = 1; i <= NUM_NODES; i++) {
-        fprintf(file, "m%d,f%d\n", i, mapping[i]);
-    }
-
-    fclose(file);
-}
-
-int get_max_node(Graph *g) { return NUM_NODES; }
-
-// Function to clean up graph memory
-void free_graph(Graph *g) {
-    if (g->edges) {
-        for (int i = 0; i < MAX_NODES; i++) {
-            if (g->edges[i].count > 0) {
-                free(g->edges[i].to_nodes);
-                free(g->edges[i].weights);
-            }
-        }
-        free(g->edges);
-    }
-
-    if (g->reverse_edges) {
-        for (int i = 0; i < MAX_NODES; i++) {
-            if (g->reverse_edges[i].count > 0) {
-                free(g->reverse_edges[i].to_nodes);
-                free(g->reverse_edges[i].weights);
-            }
-        }
-        free(g->reverse_edges);
-    }
-
-    if (g->adj_matrix) {
-        free(g->adj_matrix);
-        g->adj_matrix = NULL;
-    }
-    free(g);
-}
-
-Graph *load_graph_from_csv(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-    LOG_ERROR("Failed to open file: %s", filename);
-    return NULL;
-    }
-
-    Graph *graph = new_graph();
-    char line[MAX_LINE_LENGTH];
-    int line_count = 0;
-    int total_lines = 0;
-
-    // Count total lines for progress bar
-    while (fgets(line, MAX_LINE_LENGTH, file)) total_lines++;
-    rewind(file);
-
-    // Skip header
-    fgets(line, MAX_LINE_LENGTH, file);
-    total_lines--;  // Adjust for header
-
-    LOG_INFO("Loading graph from %s (%s lines)", filename,
-            format_number(total_lines));
-
-    time_t start_time = time(NULL);
-    while (fgets(line, MAX_LINE_LENGTH, file)) {
-        int from, to, weight;
-        if (sscanf(line, "%d,%d,%d", &from, &to, &weight) == 3) {
-            add_edge(graph, from, to, weight);
-            line_count++;
-            if (line_count % 100000 == 0) {
-                print_progress(line_count, total_lines, "Loading graph");
-            }
-        } else {
-            LOG_ERROR("Malformed line in CSV: %s", line);
-        }
-    }
-
-    time_t end_time = time(NULL);
-    LOG_INFO("Graph loaded successfully:");
-    LOG_INFO("  - Nodes: %s", format_number(NUM_NODES));
-    LOG_INFO("  - Edges: %s", format_number(line_count));
-    LOG_INFO("  - Time taken: %lld seconds", end_time - start_time);
-
-    fclose(file);
-    return graph;
-}
-
 void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
                          Graph *gf, int *bestMapping, int nodeM1, int nodeM2) {
     // Use OpenMP to parallelize the nested loops
@@ -576,6 +147,51 @@ void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
     }
 }
 
+void update_lookup_and_heap_from_selected_nodes(short *lookup, SwapHeap *swapHeap, Graph *gm, 
+                                              Graph *gf, int *bestMapping, bool *selectedNodes) {
+    #pragma omp parallel
+    {
+        // Create thread-local heap to avoid contention
+        SwapHeap *local_heap = create_swap_heap(1000);
+        
+        // First loop: each thread processes a subset of all nodes
+        #pragma omp for schedule(dynamic)
+        for (int node1 = 1; node1 <= NUM_NODES; node1++) {
+            // Only process if this node needs updating
+            if (selectedNodes[node1]) {
+                // For each selected node, we need to calculate its interaction with all other nodes
+                for (int node2 = 1; node2 <= NUM_NODES; node2++) {
+                    if (node1 != node2) {
+                        int swapDelta = calculate_swap_delta(gm, gf, bestMapping, node1, node2);
+                        
+                        // Update lookup table - needs synchronization
+                        #pragma omp critical
+                        {
+                            lookup[node1 * NUM_NODES + node2] = (short)swapDelta;
+                            lookup[node2 * NUM_NODES + node1] = (short)swapDelta;
+                        }
+                        
+                        // Add to heap if it's a beneficial swap
+                        if (node1 > node2 && (swapDelta > 0 || (ACCEPT_ZERO_DELTA && swapDelta == 0))) {
+                            insert_swap(local_heap, (Swap){node1, node2, swapDelta});
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Merge thread-local heap into global heap
+        #pragma omp critical
+        {
+            for (int i = 0; i < local_heap->size; i++) {
+                insert_swap(swapHeap, local_heap->data[i]);
+            }
+        }
+        
+        // Clean up local heap
+        destroy_swap_heap(local_heap);
+    }
+}
 // Random number between 0 and 1
 static inline double random_double(struct xoshiro256ss_state *state){
     return ((double) xoshiro256ss(state)) / (double) UINT64_MAX;
@@ -710,13 +326,21 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             LOG_INFO("Finished reinsertion");
         } 
 
-        if( (PROBABILISTIC || SIMULATED_ANNEALING) && (i - lastImproved) > 1500 && i % PROBABILISTIC_INTERVAL == 0 && no_positive_deltas(swapHeap)){
-            if(SIMULATED_ANNEALING && i % (10*PROBABILISTIC_INTERVAL) == 0){
+        if( (PROBABILISTIC || SIMULATED_ANNEALING || HUNGARIAN) && (i - lastImproved) > 1500 && i % PROBABILISTIC_INTERVAL == 0 && no_positive_deltas(swapHeap)){
+            if(SIMULATED_ANNEALING && i % SIMULATED_ANNEALING_INTERVAL == 0){
                 LOG_INFO("Performing simulated annealing at iteration %d", i);
-                score = simulated_annealing(lookup, swapHeap, gm, gf, inMapping, score, (int) 5*pow(10,7), 0.1, 1.0, &state);
-            }else if(PROBABILISTIC){
+                score = simulated_annealing(lookup, swapHeap, gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), (int) 5*pow(10,7), 0.1, 1.0, &state);
+            }else if(HUNGARIAN && i % HUNGARIAN_INTERVAL == 0){
+                LOG_INFO("Performing hungarian at iteration %d", i);
+                hungarian_out hungarianResult = optimize_hungarian(gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), HUNGARIAN_ITERS);;
+                inMapping = hungarianResult.mapping;
+                update_lookup_and_heap_from_selected_nodes(lookup, swapHeap, gm, gf, inMapping, hungarianResult.updated_nodes);
+                free(hungarianResult.updated_nodes);
+                score = calculate_alignment_score(gm, gf, inMapping);
+            }
+            else if(PROBABILISTIC){
                 LOG_INFO("Performing probabilistic swaps at iteration %d", i);
-                score = probabilistic_swaps(lookup, swapHeap, gm, gf, inMapping, score, probabilisticSwaps, probabilisticTemperature, false, &state);
+                score = probabilistic_swaps(lookup, swapHeap, gm, gf, inMapping, score, PROBABILISTIC_SWAPS, PROBABILISTIC_TEMPERATURE, false, &state);
             }
 
             reinsert_into_heap(swapHeap, lookup, true);
