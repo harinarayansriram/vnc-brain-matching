@@ -18,4 +18,4 @@ int one_side_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int nod
 int* optimal_assignment(int k, double** cost_matrix);
 
 // Optimize mapping using Hungarian algorithm with subset selection
-hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int current_score, int iters);
+hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int current_score, int iters, int* k_schedule);

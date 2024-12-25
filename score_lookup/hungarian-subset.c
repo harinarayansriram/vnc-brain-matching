@@ -71,7 +71,7 @@ int* optimal_assignment(int k, double** cost_matrix){
 }
 
 // Function to optimize mapping
-hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int current_score, int iters) {
+hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int current_score, int iters, int* k_schedule) {
     int max_node = NUM_NODES;
 
     int* current_mapping = malloc(sizeof(int) * (max_node + 1));
@@ -87,8 +87,8 @@ hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int
     
 
     srand(time(NULL));
-    int k=700; //choose 5 independent nodes
     for(int iter=0; iter<iters; iter++){
+        int k = k_schedule[iter]; //choose 5 independent nodes
         if(iter % 20 == 0) printf("iter %d, current score: %d\n", iter, current_score);
         //optimization loop
         bool* available = malloc(sizeof(int) * (NUM_NODES + 1));
@@ -182,7 +182,7 @@ hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int
         }
 
         current_score += delta;
-        current_score = calculate_alignment_score(gm, gf, current_mapping);
+        // current_score = calculate_alignment_score(gm, gf, current_mapping);
 
         // printf("Score: %i, Delta: %i, Changed: %i\n", current_score, delta, changed);
         for (int i = 0; i < k; i++) {

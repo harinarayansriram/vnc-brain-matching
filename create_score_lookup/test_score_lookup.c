@@ -286,7 +286,7 @@ int calculate_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int no
     return delta;
 }
 
-short* createScoreLookup(Graph* gm, Graph* gf, int* mapping) {
+short* create_score_lookup(Graph* gm, Graph* gf, int* mapping) {
     LOG_INFO("Creating score lookup...");
     short* lookup = (short*)calloc(NUM_NODES * NUM_NODES, sizeof(short));
 
@@ -496,7 +496,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    short* lookup = createScoreLookup(gm, gf, benchmark);
+    short* lookup = create_score_lookup(gm, gf, benchmark);
     save_lookup(argv[4], lookup);
     
     int initial_score = calculate_alignment_score(gm, gf, benchmark);

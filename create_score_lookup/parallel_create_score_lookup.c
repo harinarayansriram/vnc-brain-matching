@@ -300,7 +300,7 @@ int calculate_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int no
     return delta;
 }
 
-short* createScoreLookup(Graph* gm, Graph* gf, int* mapping) {
+short* create_score_lookup(Graph* gm, Graph* gf, int* mapping) {
     LOG_INFO("Creating score lookup using OpenMP...");
     short* lookup = (short*)calloc(NUM_NODES * NUM_NODES, sizeof(short));
     
@@ -327,10 +327,11 @@ short* createScoreLookup(Graph* gm, Graph* gf, int* mapping) {
             int i = (int)((1.0 + sqrt(1 + 8 * n)) * 0.5);
             int j = n - (i * (i-1))/2;
             
+            short delta = (short) calculate_swap_delta(gm, gf, mapping, i+1, j+1);
             // short delta = calculate_swap_delta(gm, gf, mapping, i+1, j+1);
-            lookup[i*NUM_NODES + j] = (short) calculate_swap_delta(gm, gf, mapping, i+1, j+1);
+            lookup[i*NUM_NODES + j] = delta;
             // lookup[j*NUM_NODES + i] = (short) calculate_swap_delta(gm, gf, mapping, j+1, i+1);
-            lookup[j*NUM_NODES + i] = lookup[i*NUM_NODES + j];
+            lookup[j*NUM_NODES + i] = delta;
 
             
             #pragma omp atomic
@@ -541,7 +542,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    short* lookup = createScoreLookup(gm, gf, benchmark);
+    short* lookup = create_score_lookup(gm, gf, benchmark);
     save_lookup(argv[4], lookup);
     
     int initial_score = calculate_alignment_score(gm, gf, benchmark);

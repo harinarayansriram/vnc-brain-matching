@@ -484,12 +484,26 @@ int* optimize_mapping(Graph* gm, Graph* gf, int* initial_mapping, const char* ou
     
     LOG_INFO("Starting optimization with initial score: %s", format_number(current_score));
     srand(time(NULL));
-    int k=700; //choose 5 independent nodes
+    // int k=800; //choose 800 independent nodes
     int iter=0;
+
+    int schedule_size = 1000;
+    int* k_schedule = calloc(schedule_size, sizeof(int));
+    for(int j = 0; j < schedule_size; j++) {
+        // first third of the schedule
+        if(j < schedule_size / 4) k_schedule[j] = 600;
+        // second third of the schedule
+        else if(j < 2 * schedule_size / 4) k_schedule[j] = 700;
+        // last third of the schedule
+        else if(j < 3 * schedule_size / 4) k_schedule[j] = 800;
+        else k_schedule[j] = 900;
+    }
+
     while (true){
         //optimization loop
         bool* available = malloc(sizeof(int) * (NUM_NODES + 1));
         int rem_nodes = NUM_NODES;
+        int k = k_schedule[iter % schedule_size];
         iter++;
         for (int i=1; i<=NUM_NODES; i++){
             available[i]=true;
@@ -576,7 +590,7 @@ int* optimize_mapping(Graph* gm, Graph* gf, int* initial_mapping, const char* ou
         }
 
         current_score += delta;
-        current_score = calculate_alignment_score(gm, gf, current_mapping);
+        // current_score = calculate_alignment_score(gm, gf, current_mapping);
 
         printf("Score: %i, Delta: %i, Changed: %i\n", current_score, delta, changed);
         for (int i = 0; i < k; i++) {
@@ -589,6 +603,17 @@ int* optimize_mapping(Graph* gm, Graph* gf, int* initial_mapping, const char* ou
 
 
         if (iter%5==0)save_intermediate_mapping(out_path, current_mapping, max_node, gm, gf, current_score);
+
+        if(iter % 20 == 0){
+            printf("iter %d, current score: %d, k value: %d\n", iter, current_score, k);
+            int actual_score = calculate_alignment_score(gm, gf, current_mapping);
+            if(actual_score != current_score){
+                printf("actual score: %d\n", actual_score);
+                printf("current score: %d\n", current_score);
+                printf("delta: %d\n", actual_score - current_score);
+            }
+            current_score = actual_score;
+        } 
 
     }
 
@@ -603,6 +628,7 @@ int* optimize_mapping(Graph* gm, Graph* gf, int* initial_mapping, const char* ou
     save_intermediate_mapping(out_path, current_mapping, max_node, gm, gf, current_score);
 
     free(old_mapping);
+    free(k_schedule);
     return current_mapping;
 }
 
@@ -682,7 +708,7 @@ Graph* load_graph_from_csv(const char* filename) {
     LOG_INFO("Graph loaded successfully:");
     LOG_INFO("  - Nodes: %s", format_number(NUM_NODES));
     LOG_INFO("  - Edges: %s", format_number(line_count));
-    LOG_INFO("  - Time taken: %ld seconds", end_time - start_time);
+    LOG_INFO("  - Time taken: %.1f seconds", difftime(end_time, start_time));
     
     fclose(file);
     return graph;
