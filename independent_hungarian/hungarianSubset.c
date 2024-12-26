@@ -487,23 +487,23 @@ int* optimize_mapping(Graph* gm, Graph* gf, int* initial_mapping, const char* ou
     // int k=800; //choose 800 independent nodes
     int iter=0;
 
-    int schedule_size = 1000;
-    int* k_schedule = calloc(schedule_size, sizeof(int));
-    for(int j = 0; j < schedule_size; j++) {
-        // first third of the schedule
-        if(j < schedule_size / 4) k_schedule[j] = 600;
-        // second third of the schedule
-        else if(j < 2 * schedule_size / 4) k_schedule[j] = 700;
-        // last third of the schedule
-        else if(j < 3 * schedule_size / 4) k_schedule[j] = 800;
-        else k_schedule[j] = 900;
-    }
+    // int schedule_size = 1000;
+    // int* k_schedule = calloc(schedule_size, sizeof(int));
+    // for(int j = 0; j < schedule_size; j++) {
+    //     // first third of the schedule
+    //     if(j < schedule_size / 3) k_schedule[j] = 1000;
+    //     // second third of the schedule
+    //     else if(j < 2 * schedule_size / 3) k_schedule[j] = 1200;
+    //     // last third of the schedule
+    //     else k_schedule[j] = 1500;
+    // }
 
     while (true){
+        int k = 1500;
         //optimization loop
         bool* available = malloc(sizeof(int) * (NUM_NODES + 1));
         int rem_nodes = NUM_NODES;
-        int k = k_schedule[iter % schedule_size];
+        // int k = k_schedule[iter % schedule_size];
         iter++;
         for (int i=1; i<=NUM_NODES; i++){
             available[i]=true;
@@ -512,7 +512,11 @@ int* optimize_mapping(Graph* gm, Graph* gf, int* initial_mapping, const char* ou
         int* subset = malloc(sizeof(int) * (k));
 
         for (int i=0; i<k; i++){
-            if (rem_nodes<=0) break;
+            if (rem_nodes<=0){
+                k = i; 
+                printf("New k: %d\n", k);
+                break;
+            }
             int rand_ind = (rand() % rem_nodes)+1;
             int chosen=-1;
             for (int node=1; node<=NUM_NODES; node++){
@@ -628,7 +632,7 @@ int* optimize_mapping(Graph* gm, Graph* gf, int* initial_mapping, const char* ou
     save_intermediate_mapping(out_path, current_mapping, max_node, gm, gf, current_score);
 
     free(old_mapping);
-    free(k_schedule);
+    // free(k_schedule);
     return current_mapping;
 }
 

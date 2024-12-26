@@ -100,7 +100,10 @@ hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int
         int* subset = malloc(sizeof(int) * k);
 
         for (int i=0; i<k; i++){
-            if (rem_nodes<=0) break;
+            if (rem_nodes<=0){
+                k = i;
+                break;
+            }
             int rand_ind = (rand() % rem_nodes)+1;
             int chosen=-1;
             for (int node=1; node<=NUM_NODES; node++){

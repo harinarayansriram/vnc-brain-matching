@@ -22,7 +22,7 @@ const int ITERATIONS = 2 * 1000 * 1000;
 const int REINSERT_INTERVAL = 50 * 1000; //HEAP_CAPACITY / 4; only needs to be HEAP_CAPACITY / 2 (or possibly HEAP_CAPACITY) but just for testing
 
 const bool PROBABILISTIC = true;
-const bool SIMULATED_ANNEALING = false;
+const bool SIMULATED_ANNEALING = true;
 const bool HUNGARIAN = true;
 
 const int PROBABILISTIC_INTERVAL = 300;
@@ -32,7 +32,7 @@ const double PROBABILISTIC_TEMPERATURE = 1.0;
 const int SIMULATED_ANNEALING_INTERVAL = 1000;
 const int SIMULATED_ANNEALING_ITERATIONS = 200 * 1000 * 1000;
 
-const int HUNGARIAN_ITERS = 700;
+const int HUNGARIAN_ITERS = 400;
 const int HUNGARIAN_INTERVAL = 2500;
 
 short *load_lookup(const char *filename, SwapHeap *heap) {
@@ -47,30 +47,19 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
     short *lookup =
         (short *)calloc((NUM_NODES + 1) * (NUM_NODES + 1), sizeof(short));
 
-    int maxPrints = 100;
-    int prints = 0;
+    // int maxPrints = 100;
+    // int prints = 0;
 
     for (int i = 1; i <= NUM_NODES; i++) {
         if (i % 1000 == 0) print_progress(i, NUM_NODES, "Loading lookup...");
 
         for (int j = 1; j <= NUM_NODES; j++) {
-            if (fscanf(file, "%hd,", &lookup[i * NUM_NODES + j]) != 1) {
+            if (fscanf(file, "%hd,", &lookup[i * (NUM_NODES+1) + j]) != 1) {
                 fprintf(stderr, "Error reading file: %s at row %d, column %d\n",
                         filename, i, j);
                 fclose(file);
                 free(lookup);
                 return NULL;
-            }
-
-            short delta = lookup[i*NUM_NODES + j];
-
-            if (i > j && (delta > 0 || (ACCEPT_ZERO_DELTA && delta == 0))) {
-                insert_swap(heap, (Swap){i, j, delta});
-            }
-
-            if(delta > 0 && prints < maxPrints) {
-                prints++;
-                LOG_INFO("Loaded swap (%d, %d) with positive delta %d", i, j, delta);
             }
         }
     }
@@ -87,7 +76,7 @@ short* create_score_lookup(Graph* gm, Graph* gf, int* mapping, short* lookup) {
     
     // Initialize diagonal elements first
     for (int i = 0; i < NUM_NODES; i++) {
-        lookup[i*NUM_NODES + i] = 0;
+        lookup[i*(NUM_NODES+1) + i] = 0;
     }
     
     #pragma omp parallel
@@ -106,9 +95,9 @@ short* create_score_lookup(Graph* gm, Graph* gf, int* mapping, short* lookup) {
             int j = n - (i * (i-1))/2;
             short delta = (short) calculate_swap_delta(gm, gf, mapping, i+1, j+1);
             // short delta = calculate_swap_delta(gm, gf, mapping, i+1, j+1);
-            lookup[i*NUM_NODES + j] = delta;
+            lookup[i*(NUM_NODES+1) + j] = delta;
             // lookup[j*NUM_NODES + i] = (short) calculate_swap_delta(gm, gf, mapping, j+1, i+1);
-            lookup[j*NUM_NODES + i] = delta;
+            lookup[j*(NUM_NODES+1) + i] = delta;
 
             
             #pragma omp atomic
@@ -131,8 +120,8 @@ short* create_score_lookup(Graph* gm, Graph* gf, int* mapping, short* lookup) {
 void reinsert_into_heap(SwapHeap *heap, short *lookup, bool acceptZero) {
     for (int i = 1; i <= NUM_NODES; i++) {
         for (int j = 1; j <= NUM_NODES; j++) {
-            if (i > j && (lookup[i * NUM_NODES + j] > 0 || (acceptZero && lookup[i * NUM_NODES + j] == 0))) {
-                insert_swap(heap, (Swap){i, j, lookup[i * NUM_NODES + j]});
+            if (i > j && (lookup[i * (NUM_NODES+1) + j] > 0 || (acceptZero && lookup[i * (NUM_NODES+1) + j] == 0))) {
+                insert_swap(heap, (Swap){i, j, lookup[i * (NUM_NODES+1) + j]});
             }
         }
     }
@@ -156,9 +145,9 @@ void save_lookup(const char *filename, short *lookup) {
 
     for (int i = 0; i < NUM_NODES; i++) {
         for (int j = 0; j < NUM_NODES - 1; j++) {
-            fprintf(file, "%d,", lookup[i * NUM_NODES + j]);
+            fprintf(file, "%d,", lookup[i * (NUM_NODES+1) + j]);
         }
-        fprintf(file, "%d", lookup[i * NUM_NODES + NUM_NODES - 1]);
+        fprintf(file, "%d", lookup[i * (NUM_NODES+1) + NUM_NODES]);
         fprintf(file, "\n");
     }
 
@@ -184,8 +173,8 @@ void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
                 // Use atomic updates to safely modify shared lookup array
                 #pragma omp critical
                 {
-                    lookup[node * NUM_NODES + swapNodes[i]] = (short) swapDelta;
-                    lookup[swapNodes[i] * NUM_NODES + node] = (short) swapDelta;
+                    lookup[node * (NUM_NODES+1) + swapNodes[i]] = (short) swapDelta;
+                    lookup[swapNodes[i] * (NUM_NODES+1) + node] = (short) swapDelta;
                 }
 
                 // Collect swaps with positive or zero delta
@@ -230,8 +219,8 @@ void update_lookup_and_heap_from_selected_nodes(short *lookup, SwapHeap *swapHea
                         // Update lookup table - needs synchronization
                         // #pragma omp critical
                         // {
-                        lookup[node1 * NUM_NODES + node2] = (short)swapDelta;
-                        lookup[node2 * NUM_NODES + node1] = (short)swapDelta;
+                        lookup[node1 * (NUM_NODES+1) + node2] = (short)swapDelta;
+                        lookup[node2 * (NUM_NODES+1) + node1] = (short)swapDelta;
                         // }
                         
                         // Add to heap if it's a beneficial swap
@@ -278,7 +267,7 @@ int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, Graph *gm,
         int nodeM2 = (int) (xoshiro256ss(state) % NUM_NODES) + 1;
         if (nodeM1 == nodeM2) nodeM1++;
 
-        int delta = lookup[nodeM1 * NUM_NODES + nodeM2];
+        int delta = lookup[nodeM1 * (NUM_NODES+1) + nodeM2];
 
         if (delta == 0 && !acceptZeroDelta) continue;
 
@@ -340,7 +329,7 @@ int simulated_annealing(short *lookup, SwapHeap *swapHeap, Graph *gm,
             continue;
         }
 
-        int delta = lookup[nodeM1 * NUM_NODES + nodeM2];
+        int delta = lookup[nodeM1 * (NUM_NODES+1) + nodeM2];
 
         if (delta >= 0 || acceptProbabilisticSwap(delta, temperature, state) ) {
             swaps++;
@@ -414,7 +403,7 @@ int parallelized_simulated_annealing(short *lookup, SwapHeap *swapHeap, Graph *g
             if(threadChanged[thread_id][nodeM1] || threadChanged[thread_id][nodeM2]) {
                 delta = calculate_swap_delta(gm, gf, threadMappings[thread_id], nodeM1, nodeM2);
             } else {
-                delta = (int) lookup[nodeM1 * NUM_NODES + nodeM2];
+                delta = (int) lookup[nodeM1 * (NUM_NODES+1) + nodeM2];
             }
 
             if (delta >= 0 || acceptProbabilisticSwap(delta, temperature, &thread_state)) {
@@ -489,7 +478,7 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             }
             if(SIMULATED_ANNEALING && i % SIMULATED_ANNEALING_INTERVAL == 0){
                 LOG_INFO("Performing simulated annealing at iteration %d", i);
-                score = simulated_annealing(lookup, swapHeap, gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), SIMULATED_ANNEALING_ITERATIONS, 0.1, 1.0, &state);
+                score = parallelized_simulated_annealing(lookup, swapHeap, gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), SIMULATED_ANNEALING_ITERATIONS, 0.1, 1.0, &state);
                 empty_heap(swapHeap);
                 reinsert_into_heap(swapHeap, lookup, true);
             }
@@ -500,12 +489,13 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             LOG_INFO("Performing hungarian at iteration %d", i);
             int* k_schedule = calloc(HUNGARIAN_ITERS, sizeof(int));
             for(int j = 0; j < HUNGARIAN_ITERS; j++) {
-                // first third of the schedule
-                if(j < HUNGARIAN_ITERS / 3) k_schedule[j] = 600;
-                // second third of the schedule
-                else if(j < 2 * HUNGARIAN_ITERS / 3) k_schedule[j] = 700;
-                // last third of the schedule
-                else k_schedule[j] = 800;
+                // // first third of the schedule
+                // if(j < HUNGARIAN_ITERS / 3) k_schedule[j] = 600;
+                // // second third of the schedule
+                // else if(j < 2 * HUNGARIAN_ITERS / 3) k_schedule[j] = 700;
+                // // last third of the schedule
+                // else k_schedule[j] = 800;
+                k_schedule[j] = 1000;
             }
             hungarian_out hungarianResult = optimize_hungarian(gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), HUNGARIAN_ITERS, k_schedule);
             free(k_schedule);
@@ -513,9 +503,9 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             memcpy(inMapping, hungarianResult.mapping, (NUM_NODES + 1) * sizeof(int));
             free(hungarianResult.mapping);
             time_t start = time(NULL);
-            // update_lookup_and_heap_from_selected_nodes(lookup, swapHeap, gm, gf, inMapping, hungarianResult.updated_nodes);
-            empty_heap(swapHeap);
-            create_score_lookup(gm, gf, inMapping, lookup);
+            update_lookup_and_heap_from_selected_nodes(lookup, swapHeap, gm, gf, inMapping, hungarianResult.updated_nodes);
+            // empty_heap(swapHeap);
+            // create_score_lookup(gm, gf, inMapping, lookup);
             reinsert_into_heap(swapHeap, lookup, true);
             LOG_INFO("Reinserted into heap at iteration %d, size: %d", i, swapHeap->size);
 
@@ -677,11 +667,14 @@ int main(int argc, char *argv[]) {
     }
 
     lookup = load_lookup(argv[4], swapHeap);
+    // lookup = read_lookup_matrix(argv[4]);
     if (!lookup) {
         LOG_ERROR("Failed to load lookup file");
         EXIT_STATUS = 1;
         goto cleanup;
     }
+
+    reinsert_into_heap(swapHeap, lookup, true);
 
     int initial_score = calculate_alignment_score(gm, gf, inMapping);
     LOG_INFO("Initial alignment score: %s", format_number(initial_score));

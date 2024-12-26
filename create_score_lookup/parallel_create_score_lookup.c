@@ -358,11 +358,9 @@ void save_lookup(const char* filename, short* lookup) {
     }
     
     for (int i = 0; i < NUM_NODES; i++) {
-        for (int j = 0; j < NUM_NODES-1; j++) {
+        for (int j = 0; j < NUM_NODES; j++) {
             fprintf(file, "%d,", lookup[i*NUM_NODES + j]);
         }
-        fprintf(file, "%d", lookup[i*NUM_NODES + NUM_NODES-1]);
-        fprintf(file, "\n");
     }
     
     fclose(file);
