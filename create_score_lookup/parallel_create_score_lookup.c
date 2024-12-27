@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <time.h>
+#include <signal.h>
 #include <omp.h>
 
 #define SAVE_INTERVAL 25
@@ -12,8 +13,9 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define MAX_NODES 100000
+#define NUM_NODES 18524
 
-const int NUM_NODES = 18524;
+static volatile sig_atomic_t interrupted = 0;
 
 typedef enum {
     LOG_LEVEL_INFO = 0,
@@ -53,6 +55,10 @@ typedef struct Graph {
     short* adj_matrix;
     int node_capacity;
 } Graph;
+
+void sigint_handler(int sig) {
+    interrupted = 1;
+}
 
 // Function to format numbers with commas
 // Modified to be thread-safe by removing static buffer
@@ -502,6 +508,10 @@ int main(int argc, char* argv[]) {
         LOG_ERROR("Usage: %s <male graph> <female graph> <in mapping> <out lookup>", argv[0]);
         return 1;
     }
+
+    signal(SIGINT, sigint_handler);
+    signal(SIGTERM, sigint_handler);
+    // signal(SIGUSR2, sigint_handler);
     
     // Set OpenMP parameters
     omp_set_nested(1);  // Enable nested parallelism

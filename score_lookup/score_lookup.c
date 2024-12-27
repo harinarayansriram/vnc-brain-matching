@@ -13,6 +13,7 @@
 #include "xoshiro.h"
 #include "utils.h"
 #include "hungarian-subset.h"
+#include "interrupts.h"
 
 #define CURRENT_LOG_LEVEL LOG_LEVEL_INFO
 
@@ -35,8 +36,6 @@ const int SIMULATED_ANNEALING_ITERATIONS = 200 * 1000 * 1000;
 
 const int HUNGARIAN_ITERS = 400;
 const int HUNGARIAN_INTERVAL = 2500;
-
-static volatile sig_atomic_t interrupted = 0;
 
 void sigint_handler(int sig) {
     interrupted = 1;
@@ -80,59 +79,6 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
     }
 
     fclose(file);
-    return lookup;
-}
-
-short* create_score_lookup(Graph* gm, Graph* gf, int* mapping, short* lookup) {
-    LOG_INFO("Creating score lookup using OpenMP...");
-    
-    const int maxCount = NUM_NODES * (NUM_NODES-1) / 2;
-    volatile long progress = 0;  // Shared progress counter
-    
-    // Initialize diagonal elements first
-    for (int i = 0; i < NUM_NODES; i++) {
-        lookup[i*(NUM_NODES+1) + i] = 0;
-    }
-    
-    #pragma omp parallel
-    {
-        #pragma omp single
-        LOG_INFO("Using %d threads", omp_get_num_threads());
-        
-        // Each thread will get its own start/end range
-        #pragma omp for schedule(dynamic, 10000)
-        for (int n = 0; n < maxCount; n++) {
-            // Convert linear index n to (i,j) coordinates
-            // For lower triangle: n = (i * (i-1))/2 + j
-            // Solve quadratic equation: i^2 - i - 2n = 0
-            // int i = (int)((sqrt(1 + 8.0 * n) + 1.0) / 2.0);
-            int i = (int)((1.0 + sqrt(1 + 8 * n)) * 0.5);
-            int j = n - (i * (i-1))/2;
-            short delta = (short) calculate_swap_delta(gm, gf, mapping, i+1, j+1);
-            // short delta = calculate_swap_delta(gm, gf, mapping, i+1, j+1);
-            lookup[i*(NUM_NODES+1) + j] = delta;
-            // lookup[j*NUM_NODES + i] = (short) calculate_swap_delta(gm, gf, mapping, j+1, i+1);
-            lookup[j*(NUM_NODES+1) + i] = delta;
-
-            
-            #pragma omp atomic
-            progress++;
-            
-            if ((progress & 0x3FFFF) == 0) {
-                #pragma omp critical
-                {
-                    LOG_INFO("Processed %ld swaps out of %d - %.2f%% complete", 
-                            progress, maxCount, 
-                            ((double)progress / (double)maxCount) * 100.0);
-                    if(interrupted != 0){
-                        free(lookup);
-                        return NULL;
-                    }
-                }
-            }
-        }
-    }
-    
     return lookup;
 }
 
@@ -187,12 +133,11 @@ void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
 
         #pragma omp for schedule(dynamic)
         for (int node = 1; node <= NUM_NODES; node++) {
-            const int swapNodes[2] = {nodeM1, nodeM2};
-
-            if(node % 1000 == 0 && interrupted != 0){
-                destroy_swap_heap(local_heap);
-                return;
+            if(interrupted != 0){ //Theoretically, it'll just run as fast as it can till the end
+               continue;
             }
+
+            const int swapNodes[2] = {nodeM1, nodeM2};
 
             for (int i = 0; i < 2; i++) {
                 // Calculate swap delta, which is thread-safe as it doesn't modify shared state
@@ -236,24 +181,23 @@ void update_lookup_and_heap_from_selected_nodes(short *lookup, SwapHeap *swapHea
         
         // First loop: each thread processes a subset of all nodes
         #pragma omp for schedule(dynamic)
-        for (int node1 = 1; node1 <= NUM_NODES; node1++) {\
-            if(node1 % 1000 == 0 && interrupted != 0){
-                destroy_swap_heap(local_heap);
-                return;
+        for (int node1 = 1; node1 <= NUM_NODES; node1++) {
+            if(interrupted != 0){ //Again, theoretically it'll just run as fast as it can till the end
+                continue;
             }
             // Only process if this node needs updating
             if (selectedNodes[node1]) {
                 // For each selected node, we need to calculate its interaction with all other nodes
                 for (int node2 = 1; node2 <= NUM_NODES; node2++) {
                     if (node1 != node2) {
-                        int swapDelta = calculate_swap_delta(gm, gf, bestMapping, node1, node2);
+                        short swapDelta = (short) calculate_swap_delta(gm, gf, bestMapping, node1, node2);
                         
                         // Update lookup table - needs synchronization
-                        // #pragma omp critical
-                        // {
-                        lookup[node1 * (NUM_NODES+1) + node2] = (short)swapDelta;
-                        lookup[node2 * (NUM_NODES+1) + node1] = (short)swapDelta;
-                        // }
+                        #pragma omp critical
+                        {
+                            lookup[node1 * (NUM_NODES+1) + node2] = swapDelta;
+                            lookup[node2 * (NUM_NODES+1) + node1] = swapDelta;
+                        }
                         
                         // Add to heap if it's a beneficial swap
                         if (node1 > node2 && (swapDelta > 0 || (ACCEPT_ZERO_DELTA && swapDelta == 0))) {
@@ -275,7 +219,10 @@ void update_lookup_and_heap_from_selected_nodes(short *lookup, SwapHeap *swapHea
         // Clean up local heap
         destroy_swap_heap(local_heap);
     }
-    reinsert_into_heap(swapHeap, lookup, true);
+
+    if(interrupted == 0){
+        reinsert_into_heap(swapHeap, lookup, true);
+    }
 }
 // Random number between 0 and 1
 static inline double random_double(struct xoshiro256ss_state *state){
@@ -685,7 +632,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    omp_set_nested(1);  // Enable nested parallelism
+
     signal(SIGINT, sigint_handler);
+    signal(SIGTERM, sigint_handler);
     // signal(SIGUSR2, sigint_handler);
 
     time_t total_start = time(NULL);

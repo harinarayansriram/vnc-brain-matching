@@ -7,6 +7,7 @@
 #include "hungarian.h"
 #include "hungarian-subset.h"
 #include "utils.h"
+#include "interrupts.h"
 
 int one_side_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int node_m2) {
     int node_f1 = mapping[node_m1];
@@ -88,6 +89,10 @@ hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int
 
     srand(time(NULL));
     for(int iter=0; iter<iters; iter++){
+        if(interrupted != 0){
+            fprintf(stderr, "Interrupted in Hungarian!\n");
+            break;
+        }
         int k = k_schedule[iter]; //choose 5 independent nodes
         if(iter % 20 == 0) printf("iter %d, current score: %d\n", iter, current_score);
         //optimization loop
