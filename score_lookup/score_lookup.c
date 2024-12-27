@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
 #include <omp.h>
 
 #include "heap.h"
@@ -35,6 +36,14 @@ const int SIMULATED_ANNEALING_ITERATIONS = 200 * 1000 * 1000;
 const int HUNGARIAN_ITERS = 400;
 const int HUNGARIAN_INTERVAL = 2500;
 
+static volatile sig_atomic_t interrupted = 0;
+
+void sigint_handler(int sig) {
+    interrupted = 1;
+
+    fprintf(stderr, "\nReceived interrupt signal. Cleaning up...\n");
+}
+
 short *load_lookup(const char *filename, SwapHeap *heap) {
     LOG_INFO("Loading score lookup...");
 
@@ -51,8 +60,14 @@ short *load_lookup(const char *filename, SwapHeap *heap) {
     // int prints = 0;
 
     for (int i = 1; i <= NUM_NODES; i++) {
-        if (i % 1000 == 0) print_progress(i, NUM_NODES, "Loading lookup...");
-
+        if (i % 1000 == 0){
+            print_progress(i, NUM_NODES, "Loading lookup...");
+            if(interrupted != 0){
+                fclose(file);
+                free(lookup);
+                return NULL;
+            }
+        } 
         for (int j = 1; j <= NUM_NODES; j++) {
             if (fscanf(file, "%hd,", &lookup[i * (NUM_NODES+1) + j]) != 1) {
                 fprintf(stderr, "Error reading file: %s at row %d, column %d\n",
@@ -109,6 +124,10 @@ short* create_score_lookup(Graph* gm, Graph* gf, int* mapping, short* lookup) {
                     LOG_INFO("Processed %ld swaps out of %d - %.2f%% complete", 
                             progress, maxCount, 
                             ((double)progress / (double)maxCount) * 100.0);
+                    if(interrupted != 0){
+                        free(lookup);
+                        return NULL;
+                    }
                 }
             }
         }
@@ -144,6 +163,10 @@ void save_lookup(const char *filename, short *lookup) {
     }
 
     for (int i = 0; i < NUM_NODES; i++) {
+        if(i % 1000 == 0 && interrupted != 0){
+            fclose(file);
+            return;
+        }
         for (int j = 0; j < NUM_NODES - 1; j++) {
             fprintf(file, "%d,", lookup[i * (NUM_NODES+1) + j]);
         }
@@ -165,6 +188,11 @@ void update_lookup_and_heap(short *lookup, SwapHeap *swapHeap, Graph *gm,
         #pragma omp for schedule(dynamic)
         for (int node = 1; node <= NUM_NODES; node++) {
             const int swapNodes[2] = {nodeM1, nodeM2};
+
+            if(node % 1000 == 0 && interrupted != 0){
+                destroy_swap_heap(local_heap);
+                return;
+            }
 
             for (int i = 0; i < 2; i++) {
                 // Calculate swap delta, which is thread-safe as it doesn't modify shared state
@@ -208,7 +236,11 @@ void update_lookup_and_heap_from_selected_nodes(short *lookup, SwapHeap *swapHea
         
         // First loop: each thread processes a subset of all nodes
         #pragma omp for schedule(dynamic)
-        for (int node1 = 1; node1 <= NUM_NODES; node1++) {
+        for (int node1 = 1; node1 <= NUM_NODES; node1++) {\
+            if(node1 % 1000 == 0 && interrupted != 0){
+                destroy_swap_heap(local_heap);
+                return;
+            }
             // Only process if this node needs updating
             if (selectedNodes[node1]) {
                 // For each selected node, we need to calculate its interaction with all other nodes
@@ -262,6 +294,9 @@ int probabilistic_swaps(short *lookup, SwapHeap *swapHeap, Graph *gm,
     int evaluatedSwaps = 0;
     int newScore = score;
     while (swaps < numSwaps) {
+        if(evaluatedSwaps % 1000000 == 0 && interrupted != 0){
+            return newScore;
+        }
         evaluatedSwaps++;
         int nodeM1 = (int) (xoshiro256ss(state) % (NUM_NODES-1)) + 1;
         int nodeM2 = (int) (xoshiro256ss(state) % NUM_NODES) + 1;
@@ -313,6 +348,7 @@ int simulated_annealing(short *lookup, SwapHeap *swapHeap, Graph *gm,
         
         if(i % 10000000 == 0){
             LOG_INFO("Iteration %d of %d (%.2f%% complete, T=%.2lf). Performed %d swaps. Current score: %d, best score: %d", i, iterations, 100.0 * i / iterations, temperature, swaps, curScore, bestScore);
+            if(interrupted != 0) return bestScore;
         }
 
         int nodeM1 = (int) (xoshiro256ss(state) % (NUM_NODES-1)) + 1;
@@ -363,17 +399,20 @@ int parallelized_simulated_annealing(short *lookup, SwapHeap *swapHeap, Graph *g
     double t_factor = log(tmin / tmax);
     int num_threads = omp_get_max_threads();
 
+    // Allocate memory for each thread's mapping and score
     int **threadMappings = malloc(num_threads * sizeof(int*));
-    bool **threadChanged = malloc(num_threads * sizeof(bool*));
+    bool **threadChanged = malloc(num_threads * sizeof(bool*));  // Track which nodes have been modified
     int *threadScores = calloc(num_threads, sizeof(int));
-
+    
+    // Keep track of best solution for each thread
     int *bestThreadScores = calloc(num_threads, sizeof(int));
     int **bestThreadMappings = malloc(num_threads * sizeof(int*));
     
+    // Initialize thread-local data
     for(int i = 0; i < num_threads; i++) {
         threadMappings[i] = malloc((NUM_NODES + 1) * sizeof(int));
         bestThreadMappings[i] = malloc((NUM_NODES + 1) * sizeof(int));
-        threadChanged[i] = calloc(NUM_NODES + 1, sizeof(bool));
+        threadChanged[i] = calloc(NUM_NODES + 1, sizeof(bool));  // Initialize all nodes as unchanged
         memcpy(threadMappings[i], inMapping, (NUM_NODES + 1) * sizeof(int));
         memcpy(bestThreadMappings[i], inMapping, (NUM_NODES + 1) * sizeof(int));
         threadScores[i] = score;
@@ -383,44 +422,52 @@ int parallelized_simulated_annealing(short *lookup, SwapHeap *swapHeap, Graph *g
     #pragma omp parallel
     {
         int thread_id = omp_get_thread_num();
+        // Create thread-local RNG state
         xoshiro256ss_state thread_state = *state;
-        thread_state.s[0] ^= thread_id;
+        thread_state.s[0] ^= thread_id; // Ensure different seeds for each thread
         
-        #pragma omp for
         for(int i = 0; i < iterations; i++) {
             double temperature = tmax * exp(t_factor * i / (double) iterations);
             
             if(i % 10000000 == 0) {
                 LOG_INFO("Iteration %d of %d (%.2f%% complete, T=%.2lf). Thread %d score: %d", 
                         i, iterations, 100.0 * i / iterations, temperature, thread_id, threadScores[thread_id]);
+                if(interrupted != 0) break;
             }
 
             int nodeM1 = (int) (xoshiro256ss(&thread_state) % (NUM_NODES-1)) + 1;
             int nodeM2 = (int) (xoshiro256ss(&thread_state) % NUM_NODES) + 1;
             if (nodeM1 == nodeM2) nodeM1++;
 
+            // Check if either node has been modified and calculate delta accordingly
             int delta;
             if(threadChanged[thread_id][nodeM1] || threadChanged[thread_id][nodeM2]) {
+                // If either node has been modified, we need to calculate the delta directly
                 delta = calculate_swap_delta(gm, gf, threadMappings[thread_id], nodeM1, nodeM2);
             } else {
-                delta = (int) lookup[nodeM1 * (NUM_NODES+1) + nodeM2];
+                // If neither node has been modified, we can use the lookup table
+                delta = lookup[nodeM1 * (NUM_NODES+1) + nodeM2];
             }
 
             if (delta >= 0 || acceptProbabilisticSwap(delta, temperature, &thread_state)) {
+                // Perform swap in thread-local mapping
                 SWAP(threadMappings[thread_id][nodeM1], threadMappings[thread_id][nodeM2], int);
-
                 threadScores[thread_id] += delta;
+                
+                // Mark these nodes as changed
                 threadChanged[thread_id][nodeM1] = true;
                 threadChanged[thread_id][nodeM2] = true;
 
                 if(threadScores[thread_id] > bestThreadScores[thread_id]) {
                     bestThreadScores[thread_id] = threadScores[thread_id];
-                    memcpy(bestThreadMappings[thread_id], threadMappings[thread_id], (NUM_NODES + 1) * sizeof(int));
+                    memcpy(bestThreadMappings[thread_id], threadMappings[thread_id], 
+                          (NUM_NODES + 1) * sizeof(int));
                 }
             }
         }
     }
 
+    // Find the best solution among all threads
     int bestScore = bestThreadScores[0];
     int bestThread = 0;
     for(int i = 1; i < num_threads; i++) {
@@ -432,10 +479,15 @@ int parallelized_simulated_annealing(short *lookup, SwapHeap *swapHeap, Graph *g
         }
     }
 
+    // Copy best solution back to input mapping
     memcpy(inMapping, threadMappings[bestThread], (NUM_NODES + 1) * sizeof(int));
-
-    update_lookup_and_heap_from_selected_nodes(lookup, swapHeap, gm, gf, threadMappings[bestThread], threadChanged[bestThread]);
     
+    if(interrupted == 0){
+        // Update the lookup table and heap for the changed nodes from the best thread
+        update_lookup_and_heap_from_selected_nodes(lookup, swapHeap, gm, gf, threadMappings[bestThread], threadChanged[bestThread]);
+    }
+    
+    // Clean up
     for(int i = 0; i < num_threads; i++) {
         free(threadMappings[i]);
         free(threadChanged[i]);
@@ -463,7 +515,13 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
     xoshiro256ss_state state;
     xoshiro256ss_init(&state, time(NULL));
 
+    Swap prevSwap = {-1,-1};
+
     for (int i = 1; i <= ITERATIONS; i++) {
+        if(interrupted != 0){ 
+            break;
+        }
+
         if(i % REINSERT_INTERVAL == 0){
             LOG_INFO("Reinserting into heap at iteration %d", i);
             reinsert_into_heap(swapHeap, lookup, true);
@@ -528,7 +586,7 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
 
         Swap bestSwap;
 
-        while(!extract_max(swapHeap, &bestSwap)) {
+        while(!extract_max(swapHeap, &bestSwap) || (bestSwap.nodeM1 == prevSwap.nodeM1 && bestSwap.nodeM2 == prevSwap.nodeM2) || (bestSwap.nodeM1 == prevSwap.nodeM2 && bestSwap.nodeM2 == prevSwap.nodeM1)){ 
             // LOG_ERROR("Failed to extract swap from heap at iteration %d; most likely heap is empty", i);
             // break;
             LOG_INFO("Reinserting into heap at iteration %d", i);
@@ -538,6 +596,9 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
         int nodeM1 = bestSwap.nodeM1;
         int nodeM2 = bestSwap.nodeM2;
         int delta = bestSwap.delta;
+
+        prevSwap.nodeM1 = nodeM1;
+        prevSwap.nodeM2 = nodeM2;
 
         if(nodeM1 == 0 || nodeM2 == 0){
             LOG_DEBUG("Swap with node 0 in iteration %d of optimize_mapping", i);
@@ -567,9 +628,6 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
         invalidate_swaps(swapHeap, nodeM2);
 
         update_lookup_and_heap(lookup, swapHeap, gm, gf, inMapping, nodeM1, nodeM2);
-
-        invalidate_swaps(swapHeap, nodeM1);
-        invalidate_swaps(swapHeap, nodeM2);
 
         if(i % 100 == 0){
             int actual_score = calculate_alignment_score(gm, gf, inMapping);
@@ -610,7 +668,9 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
     }
     LOG_INFO("Saving final mapping and lookup with score %d", bestScore);
 
-    save_lookup(outLookupFile, lookup);
+    if(interrupted == 0){
+        save_lookup(outLookupFile, lookup);
+    }
     save_mapping(outMappingFile, bestMapping);
 
     return bestMapping;
@@ -624,6 +684,9 @@ int main(int argc, char *argv[]) {
             argv[0]);
         return 1;
     }
+
+    signal(SIGINT, sigint_handler);
+    // signal(SIGUSR2, sigint_handler);
 
     time_t total_start = time(NULL);
     LOG_INFO("Score Lookup Tool v1.0");
