@@ -9,8 +9,6 @@
 
 #include "utils.h"
 
-#define SAVE_INTERVAL 25
-#define UPDATE_INTERVAL 20
 #define MAX_LINE_LENGTH 1024
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -93,8 +91,6 @@ Graph *new_graph() {
     g->edges = NULL;
     g->reverse_edges = NULL;
     g->adj_matrix = NULL;
-    // g->adj_matrix =
-    //     (short *)calloc((NUM_NODES + 1) * (NUM_NODES + 1), sizeof(short *));
     g->adj_matrix =
         (short *)calloc((NUM_NODES + 1) * (NUM_NODES + 1), sizeof(short));
     g->node_capacity = 10000;

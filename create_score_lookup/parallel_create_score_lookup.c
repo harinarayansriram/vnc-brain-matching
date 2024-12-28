@@ -346,9 +346,10 @@ short* create_score_lookup(Graph* gm, Graph* gf, int* mapping) {
             if ((progress & 0x3FFFF) == 0) {
                 #pragma omp critical
                 {
-                    LOG_INFO("Processed %ld swaps out of %d - %.2f%% complete", 
-                            progress, maxCount, 
-                            ((double)progress / (double)maxCount) * 100.0);
+                    // LOG_INFO("Processed %ld swaps out of %d - %.2f%% complete", 
+                    //         progress, maxCount, 
+                    //         ((double)progress / (double)maxCount) * 100.0);
+                    print_progress(progress, maxCount, "Creating score lookup");
                 }
             }
         }

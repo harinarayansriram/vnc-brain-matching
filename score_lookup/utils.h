@@ -4,8 +4,6 @@
 #include <stdint.h>
 
 // Constants
-#define SAVE_INTERVAL 25
-#define UPDATE_INTERVAL 20
 #define MAX_LINE_LENGTH 1024
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))

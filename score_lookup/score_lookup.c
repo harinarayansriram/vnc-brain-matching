@@ -22,17 +22,20 @@ const bool ACCEPT_ZERO_DELTA = true;
 const int SAVE_FREQUENCY = 800;
 const int ITERATIONS = 2 * 1000 * 1000;
 const int REINSERT_INTERVAL = 50 * 1000; //HEAP_CAPACITY / 4; only needs to be HEAP_CAPACITY / 2 (or possibly HEAP_CAPACITY) but just for testing
+const int UPDATE_INTERVAL = 2000;
 
 const bool PROBABILISTIC = true;
 const bool SIMULATED_ANNEALING = true;
 const bool HUNGARIAN = true;
 
 const int PROBABILISTIC_INTERVAL = 300;
-const int PROBABILISTIC_SWAPS = 4;
+const int PROBABILISTIC_SWAPS = 5;
 const double PROBABILISTIC_TEMPERATURE = 1.0;
 
 const int SIMULATED_ANNEALING_INTERVAL = 1000;
 const int SIMULATED_ANNEALING_ITERATIONS = 200 * 1000 * 1000;
+const double SIMULATED_ANNEALING_TMIN = 0.05;
+const double SIMULATED_ANNEALING_TMAX = 0.5;
 
 const int HUNGARIAN_ITERS = 400;
 const int HUNGARIAN_INTERVAL = 2500;
@@ -468,6 +471,10 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
         if(interrupted != 0){ 
             break;
         }
+        if(i % UPDATE_INTERVAL == 0){
+            time_t now = time(NULL);
+            LOG_DEBUG("Score: %d at time %s", score, ctime(&now));
+        }
 
         if(i % REINSERT_INTERVAL == 0){
             LOG_INFO("Reinserting into heap at iteration %d", i);
@@ -483,7 +490,7 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             }
             if(SIMULATED_ANNEALING && i % SIMULATED_ANNEALING_INTERVAL == 0){
                 LOG_INFO("Performing simulated annealing at iteration %d", i);
-                score = parallelized_simulated_annealing(lookup, swapHeap, gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), SIMULATED_ANNEALING_ITERATIONS, 0.1, 1.0, &state);
+                score = parallelized_simulated_annealing(lookup, swapHeap, gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), SIMULATED_ANNEALING_ITERATIONS, SIMULATED_ANNEALING_TMIN, SIMULATED_ANNEALING_TMAX, &state);
                 empty_heap(swapHeap);
                 reinsert_into_heap(swapHeap, lookup, true);
             }
@@ -518,13 +525,14 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             free(hungarianResult.updated_nodes);
             score = calculate_alignment_score(gm, gf, inMapping);
 
+            LOG_DEBUG("Hungarian score: %d", score);
             
             if(score > bestScore){
                 bestScore = score;
                 changed = true;
                 lastImproved = i;
-
-                LOG_INFO("New best score: %d", bestScore);
+                time_t now = time(NULL);
+                LOG_DEBUG("New best score: %d at time %s", bestScore, ctime(&now));
 
                 memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
             }
@@ -589,8 +597,9 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
                 bestScore = actual_score;
                 changed = true;
                 lastImproved = i;
-
-                LOG_INFO("New best score: %d", bestScore);
+                
+                time_t now = time(NULL);
+                LOG_DEBUG("New best score: %d at time %s", bestScore, ctime(&now));
 
                 memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
             }

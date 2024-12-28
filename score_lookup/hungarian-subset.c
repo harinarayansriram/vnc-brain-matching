@@ -9,6 +9,8 @@
 #include "utils.h"
 #include "interrupts.h"
 
+#define CURRENT_LOG_LEVEL LOG_LEVEL_DEBUG
+
 int one_side_swap_delta(Graph* gm, Graph* gf, int* mapping, int node_m1, int node_m2) {
     int node_f1 = mapping[node_m1];
     int node_f2 = mapping[node_m2];
@@ -94,7 +96,7 @@ hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping, int
             break;
         }
         int k = k_schedule[iter]; //choose 5 independent nodes
-        if(iter % 20 == 0) printf("iter %d, current score: %d\n", iter, current_score);
+        if(iter % 20 == 0 && CURRENT_LOG_LEVEL <= LOG_LEVEL_INFO) printf("iter %d, current score: %d\n", iter, current_score);
         //optimization loop
         bool* available = malloc(sizeof(int) * (NUM_NODES + 1));
         int rem_nodes = NUM_NODES;
