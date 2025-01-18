@@ -33,7 +33,7 @@ const int PROBABILISTIC_SWAPS = 5;
 const double PROBABILISTIC_TEMPERATURE = 1.0;
 
 const int SIMULATED_ANNEALING_INTERVAL = 1000;
-const int SIMULATED_ANNEALING_ITERATIONS = 200 * 1000 * 1000;
+const int SIMULATED_ANNEALING_ITERATIONS = 50 * 1000 * 1000;
 const double SIMULATED_ANNEALING_TMIN = 0.05;
 const double SIMULATED_ANNEALING_TMAX = 0.5;
 
@@ -709,7 +709,7 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Process completed:");
     LOG_INFO("  - Initial score: %s", format_number(initial_score));
     LOG_INFO("  - Final score: %s", format_number(final_score));
-    LOG_INFO("  - Improvement: %s", format_number(initial_score - final_score));
+    LOG_INFO("  - Improvement: %s", format_number(final_score - initial_score));
     LOG_INFO("  - Total time: %.1f minutes",
             difftime(total_end, total_start) / 60);
 
