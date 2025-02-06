@@ -12,7 +12,7 @@
 #include "heap.h"
 #include "xoshiro.h"
 #include "utils.h"
-#include "hungarian-subset.h"
+#include "parallel_hungarian_subset.h"
 #include "interrupts.h"
 
 #define CURRENT_LOG_LEVEL LOG_LEVEL_INFO
@@ -37,7 +37,7 @@ const int SIMULATED_ANNEALING_ITERATIONS = 50 * 1000 * 1000;
 const double SIMULATED_ANNEALING_TMIN = 0.05;
 const double SIMULATED_ANNEALING_TMAX = 0.5;
 
-const int HUNGARIAN_ITERS = 400;
+const int HUNGARIAN_ITERS = 2000;
 const int HUNGARIAN_INTERVAL = 2500;
 
 void sigint_handler(int sig) {
@@ -177,6 +177,14 @@ void update_lookup_and_heap_from_selected_nodes(short *lookup, SwapHeap *swapHea
                                               Graph *gf, int *bestMapping, bool *selectedNodes) {
     empty_heap(swapHeap);
 
+    int nodes_updated = 0;
+    int nodes_to_update = 0;
+    for(int i = 1; i <= NUM_NODES; i++){
+        if(selectedNodes[i]) nodes_to_update++;
+    }
+
+    LOG_INFO("Nodes to update: %d", nodes_to_update);
+
     #pragma omp parallel
     {
         // Create thread-local heap to avoid contention
@@ -190,6 +198,13 @@ void update_lookup_and_heap_from_selected_nodes(short *lookup, SwapHeap *swapHea
             }
             // Only process if this node needs updating
             if (selectedNodes[node1]) {
+                #pragma omp critical
+                {
+                    nodes_updated++;
+                    if(nodes_updated % 20 == 0){
+                        LOG_INFO("Nodes updated: %d out of %d", nodes_updated, nodes_to_update);
+                    }
+                }
                 // For each selected node, we need to calculate its interaction with all other nodes
                 for (int node2 = 1; node2 <= NUM_NODES; node2++) {
                     if (node1 != node2) {
@@ -227,6 +242,56 @@ void update_lookup_and_heap_from_selected_nodes(short *lookup, SwapHeap *swapHea
         reinsert_into_heap(swapHeap, lookup, true);
     }
 }
+
+short* create_score_lookup(Graph* gm, Graph* gf, int* mapping, short* lookup) {
+    LOG_INFO("Creating score lookup using OpenMP...");
+    // short* lookup = (short*)calloc(NUM_NODES * NUM_NODES, sizeof(short));
+    
+    const int maxCount = NUM_NODES * (NUM_NODES-1) / 2;
+    volatile long progress = 0;  // Shared progress counter
+    
+    // Initialize diagonal elements first
+    for (int i = 1; i <= NUM_NODES; i++) {
+        lookup[i*NUM_NODES + i] = 0;
+    }
+    
+    #pragma omp parallel
+    {
+        #pragma omp single
+        LOG_INFO("Using %d threads", omp_get_num_threads());
+        
+        // Each thread will get its own start/end range
+        #pragma omp for schedule(dynamic, 10000)
+        for (int n = 0; n < maxCount; n++) {
+            // Convert linear index n to (i,j) coordinates
+            // For lower triangle: n = (i * (i-1))/2 + j
+            // Solve quadratic equation: i^2 - i - 2n = 0
+            // int i = (int)((sqrt(1 + 8.0 * n) + 1.0) / 2.0);
+            int i = (int)((1.0 + sqrt(1 + 8 * n)) * 0.5);
+            int j = n - (i * (i-1))/2;
+            
+            short delta = (short) calculate_swap_delta(gm, gf, mapping, i+1, j+1);
+            // short delta = calculate_swap_delta(gm, gf, mapping, i+1, j+1);
+            lookup[(i+1)*NUM_NODES + j+1] = delta;
+            // lookup[j*NUM_NODES + i] = (short) calculate_swap_delta(gm, gf, mapping, j+1, i+1);
+            lookup[(j+1)*NUM_NODES + i+1] = delta;
+
+            
+            #pragma omp atomic
+            progress++;
+            
+            if ((progress & 0x3FFFF) == 0) {
+                #pragma omp critical
+                {
+                    print_progress(progress, maxCount, "Creating score lookup");
+                }
+            }
+        }
+    }
+    
+    return lookup;
+}
+
 // Random number between 0 and 1
 static inline double random_double(struct xoshiro256ss_state *state){
     return ((double) xoshiro256ss(state)) / (double) UINT64_MAX;
@@ -499,23 +564,34 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
         
         if(HUNGARIAN && i % HUNGARIAN_INTERVAL == 0){
             LOG_INFO("Performing hungarian at iteration %d", i);
-            int* k_schedule = calloc(HUNGARIAN_ITERS, sizeof(int));
-            for(int j = 0; j < HUNGARIAN_ITERS; j++) {
-                // // first third of the schedule
-                // if(j < HUNGARIAN_ITERS / 3) k_schedule[j] = 600;
-                // // second third of the schedule
-                // else if(j < 2 * HUNGARIAN_ITERS / 3) k_schedule[j] = 700;
-                // // last third of the schedule
-                // else k_schedule[j] = 800;
-                k_schedule[j] = 1000;
-            }
-            hungarian_out hungarianResult = optimize_hungarian(gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), HUNGARIAN_ITERS, k_schedule);
-            free(k_schedule);
+            // int* k_schedule = calloc(HUNGARIAN_ITERS, sizeof(int));
+            // for(int j = 0; j < HUNGARIAN_ITERS; j++) {
+            //     // // first third of the schedule
+            //     // if(j < HUNGARIAN_ITERS / 3) k_schedule[j] = 600;
+            //     // // second third of the schedule
+            //     // else if(j < 2 * HUNGARIAN_ITERS / 3) k_schedule[j] = 700;
+            //     // // last third of the schedule
+            //     // else k_schedule[j] = 800;
+            //     k_schedule[j] = 1000;
+            // }
+            hungarian_out hungarianResult = optimize_hungarian(gm, gf, inMapping, calculate_alignment_score(gm, gf, inMapping), HUNGARIAN_ITERS);
+            // free(k_schedule);
 
             memcpy(inMapping, hungarianResult.mapping, (NUM_NODES + 1) * sizeof(int));
             free(hungarianResult.mapping);
             time_t start = time(NULL);
+            LOG_INFO("Updating lookup and heap from selected nodes at iteration %d", i);
+            int num_updated = 0;
+            for(int i = 1; i <= NUM_NODES; i++){
+                if(inMapping[i] != 0){
+                    num_updated++;
+                }
+            }
+            // if(num_updated <= 3000){
             update_lookup_and_heap_from_selected_nodes(lookup, swapHeap, gm, gf, inMapping, hungarianResult.updated_nodes);
+            // }else{
+            //     create_score_lookup(gm, gf, inMapping, lookup);
+            // }
             // empty_heap(swapHeap);
             // create_score_lookup(gm, gf, inMapping, lookup);
             reinsert_into_heap(swapHeap, lookup, true);
@@ -535,6 +611,9 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
                 LOG_DEBUG("New best score: %d at time %s", bestScore, ctime(&now));
 
                 memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
+
+                save_mapping(outMappingFile, bestMapping);
+
             }
 
         }
@@ -602,6 +681,8 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
                 LOG_DEBUG("New best score: %d at time %s", bestScore, ctime(&now));
 
                 memcpy(bestMapping, inMapping, (NUM_NODES + 1) * sizeof(int));
+
+                save_mapping(outMappingFile, bestMapping);
             }
         }
 

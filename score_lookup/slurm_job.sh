@@ -11,9 +11,9 @@
 #SBATCH --qos=standard
 #SBATCH --account=bader
 
-#SBATCH --mem=64G
+#SBATCH --mem=256G
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=128
 
 #SBATCH --profile task
 
@@ -27,9 +27,9 @@ trap 'scontrol requeue $SLURM_JOB_ID' USR2
 echo "Job started at $(date)" >> %x-%j.out
 
 # Run the program
-gcc -O3 -Wall -lm -fopenmp xoshiro.c heap.c utils.c interrupts.c hungarian.c hungarian-subset.c score_lookup.c -o score_lookup
+gcc -O3 -Wall -lm -fopenmp xoshiro.c heap.c utils.c interrupts.c parallel_hungarian.c parallel_hungarian_subset.c score_lookup.c -o score_lookup
 gcc -O3 -Wall -lm -fopenmp parallel_create_score_lookup.c -o parallel_create_score_lookup
 
-./parallel_create_score_lookup ./gm.csv ./gf.csv ./5848956_best_swap_mapping.csv ./5848956_swap_matrix.csv
-./score_lookup ./gm.csv ./gf.csv ./5848956_best_swap_mapping.csv ./5848956_swap_matrix.csv ./5848956_best_swap_mapping.csv ./5839988_best_swap_swap_matrix.csv &
+./parallel_create_score_lookup ./gm.csv ./gf.csv ./5849528_best_swap_mapping.csv ./5849528_swap_matrix.csv 
+./score_lookup ./gm.csv ./gf.csv ./5849528_best_swap_mapping.csv ./5849528_swap_matrix.csv ./5849528_best_swap_mapping.csv ./5839988_best_swap_swap_matrix.csv &
 wait
