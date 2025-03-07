@@ -253,10 +253,11 @@ void analyze_differences(Mapping* initial, Mapping* test) {
         }
         else if (initial->male_used[i] && test->male_used[i]) {
             if (initial->male_to_female[i] != test->male_to_female[i]) {
-                printf("Difference: %d (m%d) maps to %d (f%d) in initial, %d (f%d) in test\n",
+                printf("Difference: %d (m%d) maps to %d (f%d) in initial, %d (f%d) in test; f%d in initial is mapped to %d (m%d) in test\n",
                        i, i, 
                        initial->male_to_female[i], initial->male_to_female[i],
-                       test->male_to_female[i], test->male_to_female[i]);
+                       test->male_to_female[i], test->male_to_female[i],
+                       initial->male_to_female[i], test->female_to_male[initial->male_to_female[i]], test->female_to_male[initial->male_to_female[i]]);
                 differences++;
             }
         }

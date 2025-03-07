@@ -12,6 +12,13 @@ type Edge struct {
 	dst int
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func readConnectomeEdges(filename string) map[Edge]int {
 	fmt.Println("Reading connectome from", filename)
 
