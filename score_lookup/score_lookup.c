@@ -22,7 +22,7 @@ const bool ACCEPT_ZERO_DELTA = true;
 const int SAVE_FREQUENCY = 800;
 const int ITERATIONS = 2 * 1000 * 1000;
 const int REINSERT_INTERVAL = 50 * 1000; //HEAP_CAPACITY / 4; only needs to be HEAP_CAPACITY / 2 (or possibly HEAP_CAPACITY) but just for testing
-const int UPDATE_INTERVAL = 2000;
+const int UPDATE_INTERVAL = 200;
 
 const bool PROBABILISTIC = true;
 const bool SIMULATED_ANNEALING = true;
@@ -516,6 +516,20 @@ int parallelized_simulated_annealing(short *lookup, SwapHeap *swapHeap, Graph *g
 
     return bestScore;
 }
+
+void log_iteration_to_file(const char* filename, long iteration, int score, int bestScore) {
+    FILE* file = fopen(filename, "a");  // Open in append mode
+    if (!file) {
+        LOG_ERROR("Failed to open log file: %s", filename);
+        return;
+    }
+    
+    // Write iteration number and score
+    fprintf(file, "%ld,%d,%d\n", iteration, score, bestScore);
+    
+    fclose(file);
+}
+
 int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
                      int *outMapping, SwapHeap *swapHeap, const char* outMappingFile, const char* outLookupFile) {
     int score = calculate_alignment_score(gm, gf, inMapping);
@@ -532,6 +546,19 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
 
     Swap prevSwap = {-1,-1};
 
+    // Create log file for iteration tracking
+    char log_filename[256];
+    sprintf(log_filename, "%s_iterations.csv", outMappingFile);
+    FILE* log_file = fopen(log_filename, "w");
+    if (!log_file) {
+        LOG_ERROR("Failed to create iteration log file: %s", log_filename);
+    } else {
+        // Write header
+        fprintf(log_file, "Iteration,Score,Best Score\n");
+        fprintf(log_file, "0,%d,%d\n", score, bestScore);  // Log initial state
+        fclose(log_file);
+    }
+
     for (int i = 1; i <= ITERATIONS; i++) {
         if(interrupted != 0){ 
             break;
@@ -545,7 +572,8 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             LOG_INFO("Reinserting into heap at iteration %d", i);
             reinsert_into_heap(swapHeap, lookup, true);
             LOG_INFO("Finished reinsertion");
-        } 
+        }
+        log_iteration_to_file(log_filename, i, score, bestScore); 
 
         bool atInterval = i % PROBABILISTIC_INTERVAL == 0 || i % SIMULATED_ANNEALING_INTERVAL == 0;
         if( (PROBABILISTIC || SIMULATED_ANNEALING) && atInterval && (i - lastImproved) > 1500 && no_positive_deltas(swapHeap)){
@@ -619,12 +647,22 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
         }
 
         Swap bestSwap;
-
+        int max_reinserts = 500;
+        int reinserts = 0;
         while(!extract_max(swapHeap, &bestSwap) || (bestSwap.nodeM1 == prevSwap.nodeM1 && bestSwap.nodeM2 == prevSwap.nodeM2) || (bestSwap.nodeM1 == prevSwap.nodeM2 && bestSwap.nodeM2 == prevSwap.nodeM1)){ 
             // LOG_ERROR("Failed to extract swap from heap at iteration %d; most likely heap is empty", i);
             // break;
+            reinserts++;
+            if(reinserts > max_reinserts) break;
+
             LOG_INFO("Reinserting into heap at iteration %d", i);
             reinsert_into_heap(swapHeap, lookup, true);
+        }
+
+        if(reinserts > max_reinserts){
+            bestSwap.nodeM1 = rand() % NUM_NODES + 1;
+            bestSwap.nodeM2 = rand() % NUM_NODES + 1;
+            bestSwap.delta = calculate_swap_delta(gm, gf, inMapping, bestSwap.nodeM1, bestSwap.nodeM2);
         }
 
         int nodeM1 = bestSwap.nodeM1;
