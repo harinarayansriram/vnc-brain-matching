@@ -163,10 +163,10 @@ def create_scip_qap_model(male_graph, female_graph, current_mapping, subset_S):
     model.col_constraints = pyo.Constraint(model.J, rule=col_constraint_rule)
 
     # Force at least one assignment to change from the initial (warm-start) solution.
-    def nontrivial_solution_rule(model):
-        return sum(model.X[i, i] for i in model.I) <= len(model.I) - 1
+    # def nontrivial_solution_rule(model):
+    #     return sum(model.X[i, i] for i in model.I) <= len(model.I) - 1
     
-    model.nontrivial_constraint = pyo.Constraint(rule=nontrivial_solution_rule)
+    # model.nontrivial_constraint = pyo.Constraint(rule=nontrivial_solution_rule)
 
     # Objective function using sparse term storage
     def objective_rule(model):
@@ -181,23 +181,24 @@ def create_scip_qap_model(male_graph, female_graph, current_mapping, subset_S):
 
 def solve_with_scip(model, time_limit=600):
     """Solve model with SCIP using optimized settings."""
-    solver = SolverFactory('scip', solver_io='nl')
+    # solver = SolverFactory('scip', solver_io='nl')
+    solver = SolverFactory('mosek')
 
     # SCIP parameters for non-convex QAP
     options = {
-        'limits/time': time_limit,
-        'limits/gap': 0.00003
-        ,  # 5% optimality gap
-        'presolving/maxrestarts': 1,
-        'separating/maxrounds': 0,
-        'heuristics/emphasis': 'aggressive',
-        'numerics/emphasis': 'fast',
-        'constraints/quadratic/enable': True,
-        'nonconvex': 2,  # Enable non-convex handling
-        'display/verblevel': 4
+        # 'limits/time': time_limit,
+        # 'limits/gap': 0.00003
+        # ,  # 5% optimality gap
+        # 'presolving/maxrestarts': 1,
+        # 'separating/maxrounds': 0,
+        # 'heuristics/emphasis': 'aggressive',
+        # 'numerics/emphasis': 'fast',
+        # 'constraints/quadratic/enable': True,
+        # 'nonconvex': 2,  # Enable non-convex handling
+        # 'display/verblevel': 4
     }
 
-    results = solver.solve(model, options=options, tee=True)
+    results = solver.solve(model, timelimit=time_limit, options=options, tee=True)
     return results
 
 def solve_subset_qap(male_graph, female_graph, current_mapping, subset_S, time_limit=600):
@@ -272,8 +273,8 @@ if __name__ == "__main__":
     male_path = '../gm.csv'
     female_path = '../gf.csv'
     # current_mapping_path = '../independent_hungarian/5853925-qap-hungarian.csv'
-    current_mapping_path = 'improved_mapping_5853925.csv'
-    subset_size = 150
+    current_mapping_path = '../score_lookup/5853925.csv'
+    subset_size = 117
 
     male_graph = parse_graph(male_path)
     female_graph = parse_graph(female_path)
@@ -294,8 +295,8 @@ if __name__ == "__main__":
     # subset_S = [593, 1342, 2371, 3451, 3605, 4039, 4394, 5587, 6275, 6284, 6995, 7037, 7149, 7248, 7263, 7614, 7618, 7856, 8400, 9035, 9237, 9404, 9561, 9643, 9883, 9934, 10092, 10141, 10166, 10244, 10347, 10452, 10575, 10833, 11080, 11084, 11086, 11146, 11287, 11522, 11544, 11677, 11839, 11936, 11974, 12290, 12352, 12461, 12587, 12602, 12613, 12700, 12858, 12897, 12935, 13009, 13117, 13446, 13563, 13668, 13683, 13748, 13760, 13761, 13863, 13966, 13973, 14290, 14349, 14469, 14502, 14769, 14829, 14848, 14916, 14946, 14970, 15012, 15016, 15037, 15046, 15062, 15069, 15079, 15138, 15158, 15187, 15218, 15263, 15280, 15282, 15324, 15338, 15395, 15528, 15557, 15598, 15620, 15628, 15631, 15674, 15679, 15699, 15701, 15717, 15748, 15752, 15822, 15837, 15838, 15839, 15860, 15916, 15926, 15940, 15951, 15968, 15971, 15979, 15985, 15997, 16002, 16022, 16029, 16101, 16126, 16135, 16138, 16197, 16213, 16348, 16610, 16683, 16698, 16705, 16770, 16777, 16785, 16786, 16802, 16805, 17164, 17458, 18002, 18157, 18200, 18257, 18276, 18284, 18339, 18419, 18428, 18473, 18492, 18499, 18506, 18507, 18510, 18520, 18523, ]
 
     while True:
-        # subset_S = sample_numbers(subset_size)
-        subset_S = [38, 32, 256, 86, 56, 126, 1680, 259, 65, 60, 400, 1085, 395, 289, 95, 267, 416, 157, 557, 6570, 152, 3361, 122, 59, 349, 321, 206, 90, 448, 23, 857, 814, 168, 372, 190, 825, 192, 198, 574, 2031, 465, 234, 344, 980, 158, 456, 888, 427, 730, 293, 12892, 12161, 457, 136, 284, 517, 226, 391, 68, 1038, 383, 69, 382, 407, 164, 544, 620, 402, 1061, 432, 129, 99, 269, 1592, 463, 520, 14911, 16252, 326, 177, 2334, 108, 7670, 1112, 1717, 1067, 196, 611, 116, 501, 115, 16244, 696, 788]
+        subset_S = sample_numbers(subset_size)
+        # subset_S = [38, 32, 256, 86, 56, 126, 1680, 259, 65, 60, 400, 1085, 395, 289, 95, 267, 416, 157, 557, 6570, 152, 3361, 122, 59, 349, 321, 206, 90, 448, 23, 857, 814, 168, 372, 190, 825, 192, 198, 574, 2031, 465, 234, 344, 980, 158, 456, 888, 427, 730, 293, 12892, 12161, 457, 136, 284, 517, 226, 391, 68, 1038, 383, 69, 382, 407, 164, 544, 620, 402, 1061, 432, 129, 99, 269, 1592, 463, 520, 14911, 16252, 326, 177, 2334, 108, 7670, 1112, 1717, 1067, 196, 611, 116, 501, 115, 16244, 696, 788]
         # Solve with SCIP
         new_mapping = solve_subset_qap(
             male_graph=male_graph,

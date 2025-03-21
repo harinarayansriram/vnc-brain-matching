@@ -86,10 +86,23 @@ int* optimal_assignment(int k, double** cost_matrix){
     return assignment;
 }
 
+void log_iteration_to_file_hungarian(const char* filename, long iteration, int score, int bestScore) {
+    FILE* file = fopen(filename, "a");  // Open in append mode
+    if (!file) {
+        LOG_ERROR("Failed to open log file: %s", filename);
+        return;
+    }
+    
+    // Write iteration number and score
+    fprintf(file, "%ld,%lu,%d,%d\n", iteration, (unsigned long) time(NULL), score, bestScore);
+    
+    fclose(file);
+}
+
 
 // Function to optimize mapping
 hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping,
-                     int current_score, int iters) {
+                     int current_score, int iters, const char* log_filename) {
     int max_node = NUM_NODES;
 
     int* current_mapping = malloc(sizeof(int) * (max_node + 1));
@@ -119,6 +132,8 @@ hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping,
             break;
         }
         srand(time(NULL));  
+
+        log_iteration_to_file_hungarian(log_filename, iter, current_score, current_score);
 
         //optimization loop
         bool* available = malloc(sizeof(int) * (NUM_NODES + 1));
@@ -154,7 +169,7 @@ hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping,
             subset[i] = chosen;
 
             //update the updated nodes
-            updated_nodes[chosen] = true; 
+            // updated_nodes[chosen] = true; 
 
             //now, update all neighbors
             for (int j = 0; j < gm->edges[chosen].count; j++) {
@@ -241,6 +256,12 @@ hungarian_out optimize_hungarian(Graph* gm, Graph* gf, int* initial_mapping,
         free(assignments);
         free(prevMapping);
         free(subset);
+    }
+
+    for(int i = 1; i < NUM_NODES+1; i++){
+        if(initial_mapping[i] != current_mapping[i]){
+            updated_nodes[i] = true;
+        }
     }
 
     time_t end_time = time(NULL);
