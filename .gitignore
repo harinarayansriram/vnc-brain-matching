@@ -2,3 +2,5 @@ __pycache__/
 */*swap_matrix.csv
 */*swaptable.csv
 misc_tests/
+mappings_from_random/
+graphs_and_analysis/visualizations_from_random

@@ -24,8 +24,8 @@ const int ITERATIONS = 2 * 1000 * 1000;
 const int REINSERT_INTERVAL = 50 * 1000; //HEAP_CAPACITY / 4; only needs to be HEAP_CAPACITY / 2 (or possibly HEAP_CAPACITY) but just for testing
 const int UPDATE_INTERVAL = 200;
 
-const bool PROBABILISTIC = false;
-const bool SIMULATED_ANNEALING = false;
+const bool PROBABILISTIC = true;
+const bool SIMULATED_ANNEALING = true;
 const bool HUNGARIAN = true;
 const bool BEST_SWAP = true;
 
@@ -40,6 +40,9 @@ const double SIMULATED_ANNEALING_TMAX = 0.5;
 
 const int HUNGARIAN_ITERS = 2000;
 const int HUNGARIAN_INTERVAL = 2500;
+
+const bool NEW_MAPPING_ON_IMPROVEMENT = false;
+const int NEW_MAPPING_ON_IMPROVEMENT_THRESHOLD = 10000;
 
 void sigint_handler(int sig) {
     interrupted = 1;
@@ -392,6 +395,23 @@ void log_iteration_to_file(const char* filename, long iteration, int score, int 
     fclose(file);
 }
 
+void save_new_mapping_to_file(int* mapping, int score){
+    char filename[256];
+    sprintf(filename, "new_mapping_%d.csv", score);
+    FILE* file = fopen(filename, "w");
+    if (!file) {
+        LOG_ERROR("Failed to create new mapping file: %s", filename);
+        return;
+    }
+
+    fprintf(file, "Male Node ID,Female Node ID\n");
+    for (int i = 1; i <= NUM_NODES; i++) {
+        fprintf(file, "m%d,f%d\n", i, mapping[i]);
+    }
+
+    fclose(file);
+}
+
 int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
                      int *outMapping, SwapHeap *swapHeap, const char* outMappingFile, const char* outLookupFile) {
     int score = calculate_alignment_score(gm, gf, inMapping);
@@ -421,6 +441,8 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
         fclose(log_file);
     }
 
+    int last_saved_score = score;
+
     for (int i = 1; i <= ITERATIONS; i++) {
         if(interrupted != 0){ 
             break;
@@ -436,6 +458,12 @@ int *optimize_mapping(Graph *gm, Graph *gf, int *inMapping, short *lookup,
             LOG_INFO("Finished reinsertion");
         }
         log_iteration_to_file(log_filename, i, score, bestScore); 
+
+        if(NEW_MAPPING_ON_IMPROVEMENT && score - last_saved_score >= NEW_MAPPING_ON_IMPROVEMENT_THRESHOLD){
+            save_new_mapping_to_file(inMapping, score);
+            LOG_INFO("Saving new mapping at iteration %d with score %d to new file (improved by %d).", i, score, score - last_saved_score);
+            last_saved_score = score;
+        }
 
         bool atInterval = i % PROBABILISTIC_INTERVAL == 0 || i % SIMULATED_ANNEALING_INTERVAL == 0;
         // if( (PROBABILISTIC || SIMULATED_ANNEALING) && atInterval && (i - lastImproved) > 1500 && no_positive_deltas(swapHeap)){
